@@ -15,8 +15,6 @@ Built for the Manipal University Jaipur Placement Cell to help students practice
 
 ### 1. Clone & Install Dependencies
 ```bash
-git clone <your-repo-url>
-cd <your-repo-folder>
 
 # Create virtual environment (Optional but recommended)
 python -m venv venv
