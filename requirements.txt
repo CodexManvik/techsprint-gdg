@@ -1,0 +1,12 @@
+fastapi
+uvicorn
+python-dotenv
+google-generativeai
+mediapipe
+opencv-python
+numpy
+pypdf
+pydub
+SpeechRecognition
+python-multipart
+websockets

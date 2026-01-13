@@ -1,0 +1,250 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>The Interview Mirror - AI Coach</title>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/control_utils/control_utils.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/face_mesh.js" crossorigin="anonymous"></script>
+
+    <style>
+        body { font-family: 'Segoe UI', sans-serif; background: #1a1a1a; color: white; display: flex; flex-direction: column; align-items: center; }
+        h1 { margin-bottom: 10px; }
+        .container { position: relative; width: 640px; height: 480px; margin-top: 20px; border: 3px solid #333; border-radius: 10px; overflow: hidden; }
+        
+        /* Video & Canvas Overlay */
+        #input_video { position: absolute; width: 100%; height: 100%; object-fit: cover; transform: scaleX(-1); } /* Mirror effect */
+        #output_canvas { position: absolute; width: 100%; height: 100%; transform: scaleX(-1); }
+        
+        /* UI Overlays */
+        .feedback-overlay { position: absolute; top: 10px; left: 10px; background: rgba(0,0,0,0.6); padding: 10px; border-radius: 8px; font-size: 14px; }
+        .ai-chat-box { width: 640px; min-height: 100px; background: #2d2d2d; margin-top: 15px; padding: 15px; border-radius: 8px; border-left: 5px solid #007bff; }
+        .controls { margin-top: 15px; }
+        button { padding: 10px 20px; font-size: 16px; cursor: pointer; background: #007bff; color: white; border: none; border-radius: 5px; }
+        button.recording { background: #dc3545; animation: pulse 1.5s infinite; }
+        
+        @keyframes pulse { 0% { opacity: 1; } 50% { opacity: 0.5; } 100% { opacity: 1; } }
+        .status-dot { height: 10px; width: 10px; background-color: #bbb; border-radius: 50%; display: inline-block; margin-right: 5px; }
+        .status-on { background-color: #28a745; }
+    </style>
+</head>
+<body>
+
+    <h1>The Interview Mirror 🤖</h1>
+    <div><span id="socket-status" class="status-dot"></span> <span id="status-text">Disconnected</span></div>
+
+    <div class="container">
+        <video id="input_video"></video>
+        <canvas id="output_canvas"></canvas>
+        
+        <div class="feedback-overlay">
+            <div>👀 Eye Contact: <span id="score-eye">--</span></div>
+            <div>🖐 Fidget Score: <span id="score-fidget">--</span></div>
+            <div>🙂 Smile: <span id="score-smile">--</span></div>
+            <div>🔊 Vol: <span id="score-vol">--</span></div>
+        </div>
+    </div>
+
+    <div class="ai-chat-box">
+        <strong>AI Recruiter:</strong>
+        <p id="ai-response">Click "Start Interview" to begin...</p>
+        <small style="color: #aaa; display:block; margin-top:5px;">You said: <span id="user-transcript">...</span></small>
+    </div>
+
+    <div style="margin-bottom: 15px; text-align: center;">
+        <input type="file" id="resume-upload" accept=".pdf" style="display: none;" onchange="uploadResume()">
+        <button onclick="document.getElementById('resume-upload').click()" style="background: #6c757d;">
+            📄 Upload Resume (PDF)
+        </button>
+        <p id="resume-status" style="font-size: 12px; color: #aaa; margin-top: 5px;"></p>
+    </div>
+
+    <div class="controls">
+        <button id="record-btn" onclick="toggleRecording()">🎤 Hold to Speak</button>
+    </div>
+
+    <script>
+        // --- CONFIGURATION ---
+        const videoElement = document.getElementById('input_video');
+        const canvasElement = document.getElementById('output_canvas');
+        const canvasCtx = canvasElement.getContext('2d');
+        
+        let socket;
+        let isRecording = false;
+        let mediaRecorder;
+        let audioChunks = [];
+        let currentLandmarks = null;
+        let lastSentTime = 0;
+
+        // --- WEBSOCKET CONNECTION ---
+        function connectWebSocket() {
+            socket = new WebSocket("ws://localhost:8000/ws/interview");
+            
+            socket.onopen = () => {
+                document.getElementById('socket-status').classList.add('status-on');
+                document.getElementById('status-text').innerText = "Live Tracking Active";
+            };
+
+            socket.onmessage = (event) => {
+                const data = JSON.parse(event.data);
+                
+                // 1. Handle Live Metrics Update
+                if (data.metrics) {
+                    updateDashboard(data.metrics);
+                }
+
+                // 2. Handle AI Response (Conversation)
+                if (data.type === "ai_response") {
+                    document.getElementById('status-text').innerText = "Live Tracking Active"; // Reset status
+                    
+                    if(data.reply) {
+                        document.getElementById('ai-response').innerText = data.reply;
+                        const utterance = new SpeechSynthesisUtterance(data.reply);
+                        window.speechSynthesis.speak(utterance);
+                    }
+                    if(data.transcript) {
+                        document.getElementById('user-transcript').innerText = data.transcript;
+                    }
+                }
+            };
+        }
+        async function uploadResume() {
+            const fileInput = document.getElementById('resume-upload');
+            const file = fileInput.files[0];
+            if (!file) return;
+
+            const formData = new FormData();
+            formData.append('file', file);
+
+            document.getElementById('resume-status').innerText = "Uploading & Reading...";
+
+            try {
+                const response = await fetch('http://localhost:8000/upload-resume', {
+                    method: 'POST',
+                    body: formData
+                });
+                const data = await response.json();
+                
+                if (data.status === "success") {
+                    document.getElementById('resume-status').innerText = "✅ Resume Analyzed!";
+                    document.getElementById('ai-response').innerText = data.intro; // Show the specific question
+                    
+                    // Speak the intro question
+                    const utterance = new SpeechSynthesisUtterance(data.intro);
+                    window.speechSynthesis.speak(utterance);
+                } else {
+                    document.getElementById('resume-status').innerText = "❌ Error reading file";
+                }
+            } catch (e) {
+                console.error(e);
+                document.getElementById('resume-status').innerText = "❌ Upload failed";
+            }
+        }
+
+        function updateDashboard(metrics) {
+            // Update Text
+            document.getElementById('score-eye').innerText = metrics.eye_contact_score || "--";
+            document.getElementById('score-fidget').innerText = metrics.fidget_score || "0";
+            document.getElementById('score-smile').innerText = metrics.is_smiling ? "Yes" : "No";
+            
+            // OPTIONAL: Update Colors based on scores
+            const eyeBox = document.getElementById('score-eye').parentElement;
+            eyeBox.style.color = metrics.eye_contact_score < 0.5 ? '#ff4444' : '#fff';
+        }
+
+        // --- MEDIAPIPE LOGIC ---
+        function onResults(results) {
+            // 1. Draw Mesh
+            canvasCtx.save();
+            canvasCtx.clearRect(0, 0, canvasElement.width, canvasElement.height);
+            canvasCtx.drawImage(results.image, 0, 0, canvasElement.width, canvasElement.height);
+            
+            if (results.multiFaceLandmarks && results.multiFaceLandmarks.length > 0) {
+                currentLandmarks = results.multiFaceLandmarks[0];
+                
+                // Draw fancy connections
+                for (const landmarks of results.multiFaceLandmarks) {
+                    drawConnectors(canvasCtx, landmarks, FACEMESH_TESSELATION, {color: '#C0C0C070', lineWidth: 1});
+                    drawConnectors(canvasCtx, landmarks, FACEMESH_RIGHT_EYE, {color: '#FF3030'});
+                    drawConnectors(canvasCtx, landmarks, FACEMESH_LEFT_EYE, {color: '#30FF30'});
+                }
+                
+                // 2. SEND LIVE DATA (Throttled)
+                // We send data every 200ms to keep the connection fast
+                const now = Date.now();
+                if (socket && socket.readyState === WebSocket.OPEN && !isRecording && (now - lastSentTime > 200)) {
+                    socket.send(JSON.stringify({
+                        type: "tracking",
+                        landmarks: currentLandmarks
+                    }));
+                    lastSentTime = now;
+                }
+            }
+            canvasCtx.restore();
+        }
+
+        // Setup FaceMesh
+        const faceMesh = new FaceMesh({locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/${file}`});
+        faceMesh.setOptions({
+            maxNumFaces: 1,
+            refineLandmarks: true,
+            minDetectionConfidence: 0.5,
+            minTrackingConfidence: 0.5
+        });
+        faceMesh.onResults(onResults);
+
+        const camera = new Camera(videoElement, {
+            onFrame: async () => { await faceMesh.send({image: videoElement}); },
+            width: 640,
+            height: 480
+        });
+        camera.start();
+
+        // --- AUDIO RECORDING ---
+        navigator.mediaDevices.getUserMedia({ audio: true }).then(stream => {
+            mediaRecorder = new MediaRecorder(stream);
+            mediaRecorder.ondataavailable = event => audioChunks.push(event.data);
+            mediaRecorder.onstop = async () => {
+                const audioBlob = new Blob(audioChunks, { type: 'audio/wav' });
+                const reader = new FileReader();
+                reader.readAsDataURL(audioBlob); 
+                reader.onloadend = () => {
+                    const base64Audio = reader.result.split(',')[1];
+                    sendAudioPayload(base64Audio);
+                };
+                audioChunks = [];
+            };
+        });
+
+        function toggleRecording() {
+            const btn = document.getElementById('record-btn');
+            if (!isRecording) {
+                isRecording = true;
+                btn.innerText = "🛑 Release to Send";
+                btn.classList.add("recording");
+                mediaRecorder.start();
+                document.getElementById('status-text').innerText = "Listening...";
+            } else {
+                isRecording = false;
+                btn.innerText = "🎤 Hold to Speak";
+                btn.classList.remove("recording");
+                mediaRecorder.stop();
+                document.getElementById('status-text').innerText = "Analyzing Answer...";
+            }
+        }
+
+        function sendAudioPayload(audioBase64) {
+            if(socket && socket.readyState === WebSocket.OPEN) {
+                socket.send(JSON.stringify({
+                    type: "conversation",
+                    audio_data: audioBase64,
+                    landmarks: currentLandmarks || []
+                }));
+            }
+        }
+
+        connectWebSocket();
+    </script>
+</body>
+</html>
