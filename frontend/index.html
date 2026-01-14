@@ -14,14 +14,15 @@
         .container { position: relative; width: 640px; height: 480px; margin-top: 20px; border: 3px solid #333; border-radius: 10px; overflow: hidden; }
         
         /* Video & Canvas Overlay */
-        #input_video { position: absolute; width: 100%; height: 100%; object-fit: cover; transform: scaleX(-1); } /* Mirror effect */
+        #input_video { position: absolute; width: 100%; height: 100%; object-fit: cover; transform: scaleX(-1); }
         #output_canvas { position: absolute; width: 100%; height: 100%; transform: scaleX(-1); }
         
         /* UI Overlays */
-        .feedback-overlay { position: absolute; top: 10px; left: 10px; background: rgba(0,0,0,0.6); padding: 10px; border-radius: 8px; font-size: 14px; }
+        .feedback-overlay { position: absolute; top: 10px; left: 10px; background: rgba(0,0,0,0.6); padding: 10px; border-radius: 8px; font-size: 14px; pointer-events: none;}
         .ai-chat-box { width: 640px; min-height: 100px; background: #2d2d2d; margin-top: 15px; padding: 15px; border-radius: 8px; border-left: 5px solid #007bff; }
-        .controls { margin-top: 15px; }
+        .controls { margin-top: 15px; display: flex; gap: 10px;}
         button { padding: 10px 20px; font-size: 16px; cursor: pointer; background: #007bff; color: white; border: none; border-radius: 5px; }
+        button:disabled { background: #555; cursor: not-allowed; }
         button.recording { background: #dc3545; animation: pulse 1.5s infinite; }
         
         @keyframes pulse { 0% { opacity: 1; } 50% { opacity: 0.5; } 100% { opacity: 1; } }
@@ -32,7 +33,7 @@
 <body>
 
     <h1>The Interview Mirror 🤖</h1>
-    <div><span id="socket-status" class="status-dot"></span> <span id="status-text">Disconnected</span></div>
+    <div><span id="socket-status" class="status-dot"></span> <span id="status-text">Initializing...</span></div>
 
     <div class="container">
         <video id="input_video"></video>
@@ -42,73 +43,111 @@
             <div>👀 Eye Contact: <span id="score-eye">--</span></div>
             <div>🖐 Fidget Score: <span id="score-fidget">--</span></div>
             <div>🙂 Smile: <span id="score-smile">--</span></div>
-            <div>🔊 Vol: <span id="score-vol">--</span></div>
+            <div>🤔 Head Gesture: <span id="score-gesture">--</span></div>
         </div>
     </div>
 
     <div class="ai-chat-box">
         <strong>AI Recruiter:</strong>
-        <p id="ai-response">Click "Start Interview" to begin...</p>
+        <p id="ai-response">Please upload your resume to start.</p>
         <small style="color: #aaa; display:block; margin-top:5px;">You said: <span id="user-transcript">...</span></small>
     </div>
 
-    <div style="margin-bottom: 15px; text-align: center;">
+    <div style="margin-bottom: 15px; text-align: center; margin-top: 10px;">
         <input type="file" id="resume-upload" accept=".pdf" style="display: none;" onchange="uploadResume()">
         <button onclick="document.getElementById('resume-upload').click()" style="background: #6c757d;">
-            📄 Upload Resume (PDF)
+            📄 1. Upload Resume
         </button>
         <p id="resume-status" style="font-size: 12px; color: #aaa; margin-top: 5px;"></p>
     </div>
 
     <div class="controls">
-        <button id="record-btn" onclick="toggleRecording()">🎤 Hold to Speak</button>
+        <button id="start-btn" onclick="initializeSession()">🔄 Reset Session</button>
+        <button id="record-btn" onclick="toggleRecording()" disabled>🎤 Hold to Speak</button>
     </div>
 
     <script>
-        // --- CONFIGURATION ---
+        // --- VARIABLES ---
         const videoElement = document.getElementById('input_video');
         const canvasElement = document.getElementById('output_canvas');
         const canvasCtx = canvasElement.getContext('2d');
         
         let socket;
+        let sessionId = null;
         let isRecording = false;
         let mediaRecorder;
         let audioChunks = [];
         let currentLandmarks = null;
         let lastSentTime = 0;
 
-        // --- WEBSOCKET CONNECTION ---
-        function connectWebSocket() {
-            socket = new WebSocket("ws://localhost:8000/ws/interview");
+        // --- 1. INITIALIZE SESSION ---
+        async function initializeSession() {
+            try {
+                const response = await fetch("http://localhost:8000/start_interview", { method: "POST" });
+                const data = await response.json();
+                sessionId = data.session_id;
+                console.log("Session ID:", sessionId);
+                
+                connectWebSocket(sessionId);
+                document.getElementById('ai-response').innerText = "Session Started. Please upload your resume.";
+                document.getElementById('record-btn').disabled = false;
+            } catch (e) {
+                console.error("Failed to start session:", e);
+                document.getElementById('status-text').innerText = "Backend Offline";
+            }
+        }
+
+        // --- 2. WEBSOCKET CONNECTION ---
+        function connectWebSocket(id) {
+            if (socket) socket.close();
+            
+            // Connect to the specific session ID endpoint
+            socket = new WebSocket(`ws://localhost:8000/ws/interview/${id}`);
             
             socket.onopen = () => {
                 document.getElementById('socket-status').classList.add('status-on');
-                document.getElementById('status-text').innerText = "Live Tracking Active";
+                document.getElementById('status-text').innerText = "Connected & Tracking";
             };
 
             socket.onmessage = (event) => {
                 const data = JSON.parse(event.data);
                 
-                // 1. Handle Live Metrics Update
-                if (data.metrics) {
+                // 1. Handle Live Metrics
+                if (data.type === "metrics_update") {
                     updateDashboard(data.metrics);
                 }
 
-                // 2. Handle AI Response (Conversation)
+                // 2. Handle AI Response
                 if (data.type === "ai_response") {
-                    document.getElementById('status-text').innerText = "Live Tracking Active"; // Reset status
-                    
+                    document.getElementById('status-text').innerText = "Connected"; 
                     if(data.reply) {
                         document.getElementById('ai-response').innerText = data.reply;
-                        const utterance = new SpeechSynthesisUtterance(data.reply);
-                        window.speechSynthesis.speak(utterance);
+                        speakText(data.reply);
                     }
                     if(data.transcript) {
                         document.getElementById('user-transcript').innerText = data.transcript;
                     }
                 }
+
+                // 3. Handle Errors / No Speech (The Fix)
+                if (data.type === "error") {
+                    document.getElementById('status-text').innerText = "Connected"; // Reset status
+                    alert(data.message); // Optional: Show alert or just text
+                }
+            };
+            
+            socket.onclose = () => {
+                document.getElementById('socket-status').classList.remove('status-on');
+                document.getElementById('status-text').innerText = "Disconnected";
             };
         }
+
+        function speakText(text) {
+            window.speechSynthesis.cancel(); // Stop previous speech
+            const utterance = new SpeechSynthesisUtterance(text);
+            window.speechSynthesis.speak(utterance);
+        }
+
         async function uploadResume() {
             const fileInput = document.getElementById('resume-upload');
             const file = fileInput.files[0];
@@ -116,8 +155,7 @@
 
             const formData = new FormData();
             formData.append('file', file);
-
-            document.getElementById('resume-status').innerText = "Uploading & Reading...";
+            document.getElementById('resume-status').innerText = "Analyzing...";
 
             try {
                 const response = await fetch('http://localhost:8000/upload-resume', {
@@ -128,13 +166,10 @@
                 
                 if (data.status === "success") {
                     document.getElementById('resume-status').innerText = "✅ Resume Analyzed!";
-                    document.getElementById('ai-response').innerText = data.intro; // Show the specific question
-                    
-                    // Speak the intro question
-                    const utterance = new SpeechSynthesisUtterance(data.intro);
-                    window.speechSynthesis.speak(utterance);
+                    document.getElementById('ai-response').innerText = data.intro;
+                    speakText(data.intro);
                 } else {
-                    document.getElementById('resume-status').innerText = "❌ Error reading file";
+                    document.getElementById('resume-status').innerText = "❌ Error";
                 }
             } catch (e) {
                 console.error(e);
@@ -143,19 +178,17 @@
         }
 
         function updateDashboard(metrics) {
-            // Update Text
             document.getElementById('score-eye').innerText = metrics.eye_contact_score || "--";
             document.getElementById('score-fidget').innerText = metrics.fidget_score || "0";
             document.getElementById('score-smile').innerText = metrics.is_smiling ? "Yes" : "No";
+            document.getElementById('score-gesture').innerText = metrics.head_gesture || "-";
             
-            // OPTIONAL: Update Colors based on scores
             const eyeBox = document.getElementById('score-eye').parentElement;
             eyeBox.style.color = metrics.eye_contact_score < 0.5 ? '#ff4444' : '#fff';
         }
 
         // --- MEDIAPIPE LOGIC ---
         function onResults(results) {
-            // 1. Draw Mesh
             canvasCtx.save();
             canvasCtx.clearRect(0, 0, canvasElement.width, canvasElement.height);
             canvasCtx.drawImage(results.image, 0, 0, canvasElement.width, canvasElement.height);
@@ -163,15 +196,14 @@
             if (results.multiFaceLandmarks && results.multiFaceLandmarks.length > 0) {
                 currentLandmarks = results.multiFaceLandmarks[0];
                 
-                // Draw fancy connections
+                // Draw Mesh
                 for (const landmarks of results.multiFaceLandmarks) {
                     drawConnectors(canvasCtx, landmarks, FACEMESH_TESSELATION, {color: '#C0C0C070', lineWidth: 1});
                     drawConnectors(canvasCtx, landmarks, FACEMESH_RIGHT_EYE, {color: '#FF3030'});
                     drawConnectors(canvasCtx, landmarks, FACEMESH_LEFT_EYE, {color: '#30FF30'});
                 }
                 
-                // 2. SEND LIVE DATA (Throttled)
-                // We send data every 200ms to keep the connection fast
+                // Send Tracking Data (Throttled 200ms)
                 const now = Date.now();
                 if (socket && socket.readyState === WebSocket.OPEN && !isRecording && (now - lastSentTime > 200)) {
                     socket.send(JSON.stringify({
@@ -184,7 +216,6 @@
             canvasCtx.restore();
         }
 
-        // Setup FaceMesh
         const faceMesh = new FaceMesh({locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/${file}`});
         faceMesh.setOptions({
             maxNumFaces: 1,
@@ -206,7 +237,7 @@
             mediaRecorder = new MediaRecorder(stream);
             mediaRecorder.ondataavailable = event => audioChunks.push(event.data);
             mediaRecorder.onstop = async () => {
-                const audioBlob = new Blob(audioChunks, { type: 'audio/wav' });
+                const audioBlob = new Blob(audioChunks, { type: 'audio/wav' }); // Browser often records webm even if you say wav
                 const reader = new FileReader();
                 reader.readAsDataURL(audioBlob); 
                 reader.onloadend = () => {
@@ -218,6 +249,8 @@
         });
 
         function toggleRecording() {
+            if (!sessionId) { alert("Please wait for session to initialize."); return; }
+            
             const btn = document.getElementById('record-btn');
             if (!isRecording) {
                 isRecording = true;
@@ -225,12 +258,14 @@
                 btn.classList.add("recording");
                 mediaRecorder.start();
                 document.getElementById('status-text').innerText = "Listening...";
+                // Stop speaking if AI is currently talking
+                window.speechSynthesis.cancel();
             } else {
                 isRecording = false;
                 btn.innerText = "🎤 Hold to Speak";
                 btn.classList.remove("recording");
                 mediaRecorder.stop();
-                document.getElementById('status-text').innerText = "Analyzing Answer...";
+                document.getElementById('status-text').innerText = "Processing Answer...";
             }
         }
 
@@ -244,7 +279,8 @@
             }
         }
 
-        connectWebSocket();
+        // Start everything automatically
+        initializeSession();
     </script>
 </body>
 </html>

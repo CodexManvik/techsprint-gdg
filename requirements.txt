@@ -10,3 +10,14 @@ pydub
 SpeechRecognition
 python-multipart
 websockets
+fastapi
+uvicorn
+python-dotenv
+python-multipart
+numpy
+pypdf
+google-genai
+SpeechRecognition
+pydub
+opencv-python
+mediapipe

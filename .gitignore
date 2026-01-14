@@ -2,3 +2,6 @@
 __pycache__
 ./engine/__pycache__
 venv
+ffmpeg.exe
+ffprobe.exe
+./interview-mirror-frontend/node_modules
