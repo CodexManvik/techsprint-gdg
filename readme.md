@@ -5,7 +5,7 @@ Built for the Manipal University Jaipur Placement Cell to help students practice
 
 ## 🚀 Features
 * **Real-time Vision Analysis:** Tracks Eye Contact, Fidgeting, and Head Gestures (Nodding/Shaking) using **Google MediaPipe**.
-* **Conversational AI:** Simulates aggressive (Dell) or behavioral (Deloitte) recruiter personas using **Google Gemini 1.5**.
+* **Conversational AI:** Simulates aggressive (Dell) or behavioral (Deloitte) recruiter personas using **Google Gemini Flask latest model**.
 * **Resume Integration:** Upload a PDF resume, and the AI generates questions based on your specific projects.
 * **Voice Interaction:** Speak your answers naturally; the system transcribes and analyzes speech rate (WPM) and volume.
 
@@ -15,8 +15,6 @@ Built for the Manipal University Jaipur Placement Cell to help students practice
 
 ### 1. Clone & Install Dependencies
 ```bash
-git clone <your-repo-url>
-cd <your-repo-folder>
 
 # Create virtual environment (Optional but recommended)
 python -m venv venv
