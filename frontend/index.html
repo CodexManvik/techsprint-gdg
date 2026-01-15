@@ -7,6 +7,7 @@
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/control_utils/control_utils.js" crossorigin="anonymous"></script>
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js" crossorigin="anonymous"></script>
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/face_mesh.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/pose/pose.js" crossorigin="anonymous"></script>
 
     <style>
         body { font-family: 'Segoe UI', sans-serif; background: #1a1a1a; color: white; display: flex; flex-direction: column; align-items: center; }
@@ -44,6 +45,12 @@
             <div>🖐 Fidget Score: <span id="score-fidget">--</span></div>
             <div>🙂 Smile: <span id="score-smile">--</span></div>
             <div>🤔 Head Gesture: <span id="score-gesture">--</span></div>
+            <hr style="border-color: #555; margin: 8px 0;">
+            <div style="color: #4CAF50; font-weight: bold;">📊 POSTURE (NEW!)</div>
+            <div>📐 Shoulder: <span id="score-shoulder">--</span></div>
+            <div>🧍 Slouch: <span id="score-slouch">--</span></div>
+            <div>🤞 Arms: <span id="score-arms">--</span></div>
+            <div>⚖️ Stability: <span id="score-stability">--</span></div>
         </div>
     </div>
 
@@ -83,7 +90,19 @@
         // --- 1. INITIALIZE SESSION ---
         async function initializeSession() {
             try {
-                const response = await fetch("http://localhost:8000/start_interview", { method: "POST" });
+                // Send default session parameters
+                const response = await fetch("http://localhost:8000/start_interview", { 
+                    method: "POST",
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        persona: "FAANG_Architect",
+                        difficulty: "Intermediate", 
+                        topic: "System Design",
+                        resume_text: null
+                    })
+                });
                 const data = await response.json();
                 sessionId = data.session_id;
                 console.log("Session ID:", sessionId);
@@ -178,6 +197,7 @@
         }
 
         function updateDashboard(metrics) {
+            // Legacy metrics (from backend)
             document.getElementById('score-eye').innerText = metrics.eye_contact_score || "--";
             document.getElementById('score-fidget').innerText = metrics.fidget_score || "0";
             document.getElementById('score-smile').innerText = metrics.is_smiling ? "Yes" : "No";
@@ -185,37 +205,252 @@
             
             const eyeBox = document.getElementById('score-eye').parentElement;
             eyeBox.style.color = metrics.eye_contact_score < 0.5 ? '#ff4444' : '#fff';
+            
+            // Posture metrics are updated in real-time by updatePostureUI()
+            // No need to update them here to avoid conflicts
+        }
+        
+        // NEW: Draw pose skeleton on canvas (MediaPipe Pose)
+        function drawPoseSkeleton(landmarks) {
+            if (!landmarks || landmarks.length < 33) return;
+            
+            const ctx = canvasCtx;
+            
+            // Use MediaPipe's built-in pose connections for accuracy
+            drawConnectors(ctx, landmarks, POSE_CONNECTIONS, {color: '#00FF00', lineWidth: 3});
+            
+            // Draw key landmark points
+            const keyPoints = [0, 11, 12, 15, 16, 23, 24]; // nose, shoulders, wrists, hips
+            keyPoints.forEach(i => {
+                if (landmarks[i] && landmarks[i].visibility > 0.5) {
+                    const lm = landmarks[i];
+                    let color = '#00FF00';
+                    let radius = 5;
+                    
+                    if (i === 0) { color = '#FF0000'; radius = 6; }  // Nose - red
+                    if (i === 11 || i === 12) { color = '#FFFF00'; radius = 6; }  // Shoulders - yellow
+                    if (i === 15 || i === 16) { color = '#FF00FF'; radius = 6; }  // Wrists - magenta
+                    if (i === 23 || i === 24) { color = '#00FFFF'; radius = 5; }  // Hips - cyan
+                    
+                    ctx.fillStyle = color;
+                    ctx.beginPath();
+                    ctx.arc(lm.x * canvasElement.width, lm.y * canvasElement.height, radius, 0, 2 * Math.PI);
+                    ctx.fill();
+                    
+                    // White outline
+                    ctx.strokeStyle = '#FFFFFF';
+                    ctx.lineWidth = 2;
+                    ctx.stroke();
+                }
+            });
         }
 
-        // --- MEDIAPIPE LOGIC ---
-        function onResults(results) {
+        // --- DUAL MEDIAPIPE SYSTEM (FaceMesh + Pose) ---
+        let currentLandmarks = null;
+        let currentPoseLandmarks = null;
+        let lastSentTime = 0;
+        
+        // FaceMesh results (for eye contact, etc.)
+        function onFaceResults(results) {
+            if (results.multiFaceLandmarks && results.multiFaceLandmarks.length > 0) {
+                currentLandmarks = results.multiFaceLandmarks[0];
+            }
+        }
+        
+        // Pose results (for your posture analysis)
+        function onPoseResults(results) {
             canvasCtx.save();
             canvasCtx.clearRect(0, 0, canvasElement.width, canvasElement.height);
             canvasCtx.drawImage(results.image, 0, 0, canvasElement.width, canvasElement.height);
             
-            if (results.multiFaceLandmarks && results.multiFaceLandmarks.length > 0) {
-                currentLandmarks = results.multiFaceLandmarks[0];
+            // Draw face mesh if available
+            if (currentLandmarks) {
+                drawConnectors(canvasCtx, currentLandmarks, FACEMESH_TESSELATION, {color: '#C0C0C070', lineWidth: 1});
+                drawConnectors(canvasCtx, currentLandmarks, FACEMESH_RIGHT_EYE, {color: '#FF3030'});
+                drawConnectors(canvasCtx, currentLandmarks, FACEMESH_LEFT_EYE, {color: '#30FF30'});
+            }
+            
+            // Store pose landmarks
+            currentPoseLandmarks = results.poseLandmarks;
+            
+            // Draw pose skeleton if available
+            if (results.poseLandmarks) {
+                drawPoseSkeleton(results.poseLandmarks);
                 
-                // Draw Mesh
-                for (const landmarks of results.multiFaceLandmarks) {
-                    drawConnectors(canvasCtx, landmarks, FACEMESH_TESSELATION, {color: '#C0C0C070', lineWidth: 1});
-                    drawConnectors(canvasCtx, landmarks, FACEMESH_RIGHT_EYE, {color: '#FF3030'});
-                    drawConnectors(canvasCtx, landmarks, FACEMESH_LEFT_EYE, {color: '#30FF30'});
-                }
+                // Process posture analysis locally
+                const postureMetrics = analyzePostureLocally(results.poseLandmarks);
                 
-                // Send Tracking Data (Throttled 200ms)
+                // Update UI immediately
+                updatePostureUI(postureMetrics);
+                
+                // Send metrics to backend
                 const now = Date.now();
                 if (socket && socket.readyState === WebSocket.OPEN && !isRecording && (now - lastSentTime > 200)) {
                     socket.send(JSON.stringify({
                         type: "tracking",
-                        landmarks: currentLandmarks
+                        landmarks: currentLandmarks,  // Face landmarks for legacy compatibility
+                        pose_landmarks: results.poseLandmarks,  // Pose landmarks for posture
+                        posture_metrics: postureMetrics  // Pre-computed posture metrics
+                    }));
+                    lastSentTime = now;
+                }
+            } else {
+                // No pose detected - still send face landmarks
+                const now = Date.now();
+                if (socket && socket.readyState === WebSocket.OPEN && !isRecording && (now - lastSentTime > 200)) {
+                    socket.send(JSON.stringify({
+                        type: "tracking",
+                        landmarks: currentLandmarks || []
                     }));
                     lastSentTime = now;
                 }
             }
+            
             canvasCtx.restore();
         }
-
+        
+        // Update posture UI immediately
+        function updatePostureUI(postureMetrics) {
+            if (!postureMetrics) return;
+            
+            const p = postureMetrics;
+            
+            // Shoulder angle
+            const shoulderText = p.is_leaning ? 
+                `${p.shoulder_angle.toFixed(1)}° ⚠️ LEANING` : 
+                `${p.shoulder_angle.toFixed(1)}° ✓`;
+            document.getElementById('score-shoulder').innerText = shoulderText;
+            document.getElementById('score-shoulder').style.color = p.is_leaning ? '#ff4444' : '#4CAF50';
+            
+            // Slouch
+            const slouchText = p.is_slouching ? 
+                `⚠️ SLOUCHING (${(p.slouch_score * 100).toFixed(0)}%)` : 
+                '✓ Good';
+            document.getElementById('score-slouch').innerText = slouchText;
+            document.getElementById('score-slouch').style.color = p.is_slouching ? '#ff4444' : '#4CAF50';
+            
+            // Arms crossed
+            const armsText = p.arms_crossed ? '❌ CROSSED' : '✓ Open';
+            document.getElementById('score-arms').innerText = armsText;
+            document.getElementById('score-arms').style.color = p.arms_crossed ? '#ff4444' : '#4CAF50';
+            
+            // Stability
+            const stabilityText = `${(p.shoulder_stability * 100).toFixed(0)}%`;
+            document.getElementById('score-stability').innerText = stabilityText;
+            document.getElementById('score-stability').style.color = 
+                p.shoulder_stability > 0.8 ? '#4CAF50' : '#ff4444';
+        }
+        
+        // YOUR POSTURE ANALYSIS - Running in frontend for speed!
+        let shoulderHistory = [];
+        let baselineNoseShoulderDist = null;
+        let armsCrossedHistory = [];
+        
+        function analyzePostureLocally(poseLandmarks) {
+            if (!poseLandmarks || poseLandmarks.length < 33) {
+                return getDefaultPostureMetrics();
+            }
+            
+            // Extract key landmarks (same as your backend code)
+            const nose = poseLandmarks[0];
+            const leftShoulder = poseLandmarks[11];
+            const rightShoulder = poseLandmarks[12];
+            const leftWrist = poseLandmarks[15];
+            const rightWrist = poseLandmarks[16];
+            const leftHip = poseLandmarks[23];
+            const rightHip = poseLandmarks[24];
+            
+            // 1. Shoulder angle calculation
+            const dx = rightShoulder.x - leftShoulder.x;
+            const dy = rightShoulder.y - leftShoulder.y;
+            let shoulderAngle = Math.atan2(dy, dx) * (180 / Math.PI);
+            
+            // Normalize to -90 to +90 range
+            if (shoulderAngle > 90) shoulderAngle = 180 - shoulderAngle;
+            else if (shoulderAngle < -90) shoulderAngle = -180 - shoulderAngle;
+            
+            const isLeaning = Math.abs(shoulderAngle) > 15.0;
+            
+            // 2. Slouch detection (adaptive baseline)
+            const shoulderWidth = Math.abs(rightShoulder.x - leftShoulder.x);
+            const shoulderAvgY = (leftShoulder.y + rightShoulder.y) / 2.0;
+            const verticalDist = shoulderAvgY - nose.y;
+            const normalizedDist = verticalDist / shoulderWidth;
+            
+            if (baselineNoseShoulderDist === null) {
+                baselineNoseShoulderDist = normalizedDist;
+            }
+            
+            const deviation = baselineNoseShoulderDist - normalizedDist;
+            const slouchScore = Math.max(0, Math.min(1, deviation / 0.15));
+            const isSlouching = slouchScore > 0.5;
+            
+            // 3. Arms crossed detection (your improved algorithm)
+            const midlineX = (leftShoulder.x + rightShoulder.x) / 2.0;
+            const hipY = (leftHip.y + rightHip.y) / 2.0;
+            
+            // Distance calculations
+            const lwToRs = Math.hypot(leftWrist.x - rightShoulder.x, leftWrist.y - rightShoulder.y);
+            const rwToLs = Math.hypot(rightWrist.x - leftShoulder.x, rightWrist.y - leftShoulder.y);
+            const lwToLs = Math.hypot(leftWrist.x - leftShoulder.x, leftWrist.y - leftShoulder.y);
+            const rwToRs = Math.hypot(rightWrist.x - rightShoulder.x, rightWrist.y - rightShoulder.y);
+            
+            const lwCenterDist = Math.hypot(leftWrist.x - midlineX, leftWrist.y - shoulderAvgY);
+            const rwCenterDist = Math.hypot(rightWrist.x - midlineX, rightWrist.y - shoulderAvgY);
+            
+            const wristsInward = (lwCenterDist < 0.25 && rwCenterDist < 0.25);
+            const wristsUp = (leftWrist.y < hipY && rightWrist.y < hipY);
+            const crossed = (lwToRs < lwToLs && rwToLs < rwToRs && wristsInward && wristsUp);
+            
+            // Temporal smoothing for arms crossed
+            armsCrossedHistory.push(crossed);
+            if (armsCrossedHistory.length > 10) armsCrossedHistory.shift();
+            const armsCrossed = armsCrossedHistory.filter(x => x).length >= 7;
+            
+            // 4. Stability tracking
+            const shoulderMidX = (leftShoulder.x + rightShoulder.x) / 2.0;
+            shoulderHistory.push(shoulderMidX);
+            if (shoulderHistory.length > 20) shoulderHistory.shift();
+            
+            let rockingScore = 0;
+            let shoulderStability = 1.0;
+            if (shoulderHistory.length >= 10) {
+                const mean = shoulderHistory.reduce((a, b) => a + b) / shoulderHistory.length;
+                const variance = shoulderHistory.reduce((sum, x) => sum + Math.pow(x - mean, 2), 0) / shoulderHistory.length;
+                const stdDev = Math.sqrt(variance);
+                rockingScore = Math.min(1.0, stdDev / 0.02);
+                shoulderStability = Math.max(0.0, 1.0 - rockingScore);
+            }
+            
+            return {
+                shoulder_angle: shoulderAngle,
+                is_leaning: isLeaning,
+                is_slouching: isSlouching,
+                slouch_score: slouchScore,
+                arms_crossed: armsCrossed,
+                rocking_score: rockingScore,
+                shoulder_stability: shoulderStability,
+                timestamp: Date.now() / 1000
+            };
+        }
+        
+        function getDefaultPostureMetrics() {
+            return {
+                shoulder_angle: 0.0,
+                is_leaning: false,
+                is_slouching: false,
+                slouch_score: 0.0,
+                arms_crossed: false,
+                rocking_score: 0.0,
+                shoulder_stability: 1.0,
+                timestamp: Date.now() / 1000
+            };
+        }
+        
+        // Initialize MediaPipe models
+        console.log("🚀 Initializing MediaPipe...");
+        
+        // FaceMesh for eye contact and facial features
         const faceMesh = new FaceMesh({locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/${file}`});
         faceMesh.setOptions({
             maxNumFaces: 1,
@@ -223,10 +458,26 @@
             minDetectionConfidence: 0.5,
             minTrackingConfidence: 0.5
         });
-        faceMesh.onResults(onResults);
-
+        faceMesh.onResults(onFaceResults);
+        
+        // Pose for your posture analysis
+        const pose = new Pose({locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/pose/${file}`});
+        pose.setOptions({
+            modelComplexity: 1,
+            smoothLandmarks: true,
+            enableSegmentation: false,
+            minDetectionConfidence: 0.5,
+            minTrackingConfidence: 0.5
+        });
+        pose.onResults(onPoseResults);
+        
+        // Camera setup
         const camera = new Camera(videoElement, {
-            onFrame: async () => { await faceMesh.send({image: videoElement}); },
+            onFrame: async () => {
+                // Send frame to both models
+                await faceMesh.send({image: videoElement});
+                await pose.send({image: videoElement});
+            },
             width: 640,
             height: 480
         });

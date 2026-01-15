@@ -1,6 +1,6 @@
 import os
 import json
-from google import genai
+import google.generativeai as genai
 from engine.difficulty import get_difficulty_prompt
 from engine.personas import get_persona_prompt
 
@@ -10,8 +10,8 @@ class AIEngine:
         if not api_key:
             raise ValueError("CRITICAL: GOOGLE_API_KEY not found.")
         
-        self.client = genai.Client(api_key=api_key)
-        self.model_id = "gemini-flash-latest" 
+        genai.configure(api_key=api_key)
+        self.model = genai.GenerativeModel('gemini-1.5-flash')
         self.chat = None
 
     def reset_session(self, style="FAANG_Architect", difficulty="Intermediate", topic="System Design", resume_context=None):
@@ -32,10 +32,12 @@ class AIEngine:
             if resume_context:
                 base_instructions += f"\n\nRESUME CONTEXT: {resume_context}"
 
-            self.chat = self.client.chats.create(
-                model=self.model_id,
-                config={"system_instruction": base_instructions}
+            # Create chat with system instruction
+            self.model = genai.GenerativeModel(
+                'gemini-1.5-flash',
+                system_instruction=base_instructions
             )
+            self.chat = self.model.start_chat(history=[])
             print(f"✅ AI Initialized: {style} | {difficulty} | {topic}")
             
             # Generate an opening question based on the context
@@ -44,7 +46,8 @@ class AIEngine:
 
         except Exception as e:
             print(f"⚠️ AI Init Warning: {e}")
-            self.chat = self.client.chats.create(model=self.model_id)
+            self.model = genai.GenerativeModel('gemini-1.5-flash')
+            self.chat = self.model.start_chat(history=[])
             return "Hello. I'm ready to interview you. Shall we begin?"
 
     def get_response(self, user_text, metrics):
@@ -90,10 +93,12 @@ class AIEngine:
         """
         
         try:
-            response = self.client.models.generate_content(
-                model=self.model_id,
-                contents=prompt,
-                config={"response_mime_type": "application/json"}
+            model = genai.GenerativeModel('gemini-1.5-flash')
+            response = model.generate_content(
+                prompt,
+                generation_config=genai.GenerationConfig(
+                    response_mime_type="application/json"
+                )
             )
             return json.loads(response.text)
         except Exception as e:

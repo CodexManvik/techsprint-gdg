@@ -2,6 +2,9 @@ from dotenv import load_dotenv
 import os
 import json
 import base64
+import numpy as np
+import cv2
+import time
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, UploadFile, File, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
@@ -73,26 +76,33 @@ async def check_session(session_id: str):
     return {"valid": False}
 
 @app.post("/start_interview")
-async def start_interview_session(req: StartSessionRequest):
+async def start_interview_session(req: StartSessionRequest = None):
+    """Start a new interview session with optional parameters."""
     session_id = str(uuid.uuid4())
+    
+    # Use defaults if no request body provided
+    persona = req.persona if req else "FAANG_Architect"
+    difficulty = req.difficulty if req else "Intermediate"
+    topic = req.topic if req else "System Design"
+    resume_text = req.resume_text if req else None
     
     # Initialize Session
     sessions[session_id] = InterviewSession(
         session_id, 
-        company_focus=req.persona, 
-        difficulty=req.difficulty, 
-        topic=req.topic
+        company_focus=persona, 
+        difficulty=difficulty, 
+        topic=topic
     )
     
     # Set TTS voice based on persona
-    tts.set_persona(req.persona)
+    tts.set_persona(persona)
     
     # Initialize AI with specific context
     opening_question = ai.reset_session(
-        style=req.persona, 
-        difficulty=req.difficulty, 
-        topic=req.topic,
-        resume_context=req.resume_text
+        style=persona, 
+        difficulty=difficulty, 
+        topic=topic,
+        resume_context=resume_text
     )
     
     return {"session_id": session_id, "opening_question": opening_question}
@@ -142,15 +152,46 @@ async def interview_endpoint(websocket: WebSocket, session_id: str):
             # --- VISION LOGIC ---
             if payload.get("type") == "tracking":
                 try:
-                    metrics = vision.analyze_frame(payload['landmarks'])
+                    # Check if we have pre-computed posture metrics from frontend
+                    if payload.get('posture_metrics'):
+                        # Frontend computed posture - just add legacy face analysis
+                        posture_metrics = payload['posture_metrics']
+                        
+                        # Legacy face analysis
+                        legacy_metrics = {}
+                        if payload.get('landmarks'):
+                            legacy_metrics = vision._analyze_legacy(payload['landmarks'])
+                        
+                        # Combine metrics
+                        metrics = {
+                            # Legacy metrics
+                            "eye_contact_score": legacy_metrics.get("eye_contact_score", 0.5),
+                            "fidget_score": legacy_metrics.get("fidget_score", 0.0),
+                            "head_gesture": legacy_metrics.get("head_gesture", "neutral"),
+                            "is_smiling": legacy_metrics.get("is_smiling", False),
+                            "is_stressed": legacy_metrics.get("is_stressed", False),
+                            "stress_detected": legacy_metrics.get("stress_detected", False),
+                            
+                            # Your posture metrics (from frontend)
+                            "posture": posture_metrics,
+                            
+                            # Meta
+                            "mode": "frontend_pose",
+                            "timestamp": posture_metrics.get("timestamp", time.time())
+                        }
+                    else:
+                        # Fallback to backend processing
+                        metrics = vision.analyze_frame(payload.get('landmarks', {}))
+                    
                     current_session.log_vision_metrics(metrics)
                     await websocket.send_text(json.dumps({
                         "type": "metrics_update",
                         "metrics": metrics
                     }))
                 except Exception as e:
-                    # Ignore vision errors (don't crash the chat)
                     print(f"Vision Error: {e}")
+                    import traceback
+                    traceback.print_exc()
 
             # --- AUDIO LOGIC ---
             elif payload.get("type") == "conversation":
