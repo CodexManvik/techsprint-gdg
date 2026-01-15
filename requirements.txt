@@ -2,6 +2,8 @@ fastapi
 uvicorn
 python-dotenv
 google-generativeai
+google-cloud-texttospeech
+google-cloud-speech
 mediapipe
 opencv-python
 numpy
@@ -10,14 +12,4 @@ pydub
 SpeechRecognition
 python-multipart
 websockets
-fastapi
-uvicorn
-python-dotenv
-python-multipart
-numpy
-pypdf
-google-genai
-SpeechRecognition
-pydub
-opencv-python
-mediapipe
+gtts
