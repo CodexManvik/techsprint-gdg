@@ -367,3 +367,34 @@ class PostureAnalyzer:
         self.arms_crossed_history.clear()
         self.baseline_nose_shoulder_dist = None
         print("✅ PostureAnalyzer state reset")
+    
+    def get_session_summary(self) -> dict:
+        """
+        Get comprehensive session summary for posture analysis.
+        
+        Returns:
+            Dictionary with session-wide posture metrics
+        """
+        # Calculate average shoulder stability
+        avg_stability = 1.0
+        if len(self.shoulder_history) > 0:
+            positions = list(self.shoulder_history)
+            mean_x = sum(positions) / len(positions)
+            variance = sum((x - mean_x) ** 2 for x in positions) / len(positions)
+            std_dev = math.sqrt(variance)
+            rocking_score = min(1.0, std_dev / self.rock_threshold)
+            avg_stability = max(0.0, 1.0 - rocking_score)
+        
+        # Calculate arms crossed percentage
+        arms_crossed_frames = sum(self.arms_crossed_history) if self.arms_crossed_history else 0
+        total_frames = len(self.arms_crossed_history) if self.arms_crossed_history else 1
+        arms_crossed_percentage = (arms_crossed_frames / total_frames) * 100
+        
+        return {
+            "frames_analyzed": total_frames,
+            "average_shoulder_stability": avg_stability,
+            "arms_crossed_percentage": arms_crossed_percentage,
+            "arms_crossed_frames": arms_crossed_frames,
+            "shoulder_movement_samples": len(self.shoulder_history),
+            "baseline_established": self.baseline_nose_shoulder_dist is not None
+        }

@@ -107,32 +107,32 @@
   - Return comprehensive GestureMetrics dataclass
   - _Requirements: 3.1, 3.2, 3.3, 3.4, 3.5_
 
-- [ ] 5. Build Stress Signal Detection
-- [ ] 5.1 Create StressAnalyzer class structure
+- [x] 5. Build Stress Signal Detection
+- [x] 5.1 Create StressAnalyzer class structure
   - Create `engine/analyzers/stress_analyzer.py` with class skeleton
   - Define StressMetrics dataclass with all stress indicators
   - Initialize thresholds (EAR=0.2, blink_rate=30/min, lip_compression=0.02)
   - _Requirements: 4.1, 4.2, 4.3, 4.4, 4.5_
 
-- [ ] 5.2 Implement Eye Aspect Ratio calculation
+- [x] 5.2 Implement Eye Aspect Ratio calculation
   - Write `_calculate_ear()` method using eye landmark distances
   - Use formula: EAR = (||p2-p6|| + ||p3-p5||) / (2 * ||p1-p4||)
   - Calculate for both left and right eyes separately
   - _Requirements: 4.1_
 
-- [ ] 5.3 Implement blink detection
+- [x] 5.3 Implement blink detection
   - Write `_detect_blink()` method comparing EAR to threshold (0.2)
   - Increment blink counter when EAR drops below threshold
   - Prevent double-counting by tracking eye state (open/closed)
   - Calculate blinks per minute from cumulative count and elapsed time
   - _Requirements: 4.2_
 
-- [ ] 5.4 Implement cognitive load detection
+- [x] 5.4 Implement cognitive load detection
   - Flag high_cognitive_load when blink_rate exceeds 30/min
   - Track blink rate history for trend analysis
   - _Requirements: 4.3_
 
-- [ ] 5.5 Implement lip compression detection
+- [x] 5.5 Implement lip compression detection
   - Write `_calculate_lip_distance()` using upper (landmark 13) and lower (landmark 14) lip
   - Calculate Euclidean distance between lip landmarks
   - Write `_detect_lip_pursing()` checking sustained compression
@@ -140,7 +140,7 @@
   - Track lip_purse_duration
   - _Requirements: 4.4, 4.5_
 
-- [ ] 5.6 Implement stress level classification
+- [x] 5.6 Implement stress level classification
   - Combine blink rate and lip pursing into overall stress_level
   - Classify as "low", "moderate", or "high" based on multiple indicators
   - Integrate main `analyze()` method with is_speaking parameter

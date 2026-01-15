@@ -38,6 +38,12 @@
         <div class="metric">😰 Face Touch: <span id="face-touch">--</span></div>
         <div class="metric">🎭 Gestures: <span id="gestures">--</span></div>
         <div class="metric">📊 Activity: <span id="activity-level">--</span></div>
+        <hr style="border-color: #555; margin: 15px 0;">
+        <div style="color: #FF9500; font-weight: bold;">🧠 STRESS ANALYSIS (NEW!)</div>
+        <div class="metric">👁️ Blink Rate: <span id="blink-rate">--</span></div>
+        <div class="metric">😰 Stress Level: <span id="stress-level">--</span></div>
+        <div class="metric">💋 Lip Pursing: <span id="lip-pursing">--</span></div>
+        <div class="metric">🧠 Cognitive Load: <span id="cognitive-load">--</span></div>
     </div>
 
     <script>
@@ -149,6 +155,10 @@
                 results.poseLandmarks ? (results.poseLandmarks[11].y + results.poseLandmarks[12].y) / 2 : 0.5
             );
             updateGestureUI(gestureMetrics);
+            
+            // NEW: Analyze stress signals
+            const stressMetrics = analyzeStress(results.faceLandmarks);
+            updateStressUI(stressMetrics);
             
             // Update status
             let statusParts = [];
@@ -414,6 +424,314 @@
             
             console.log('Final gesture result:', result);
             return result;
+        }
+        
+        // NEW: Stress Analysis Function with Distance Adaptation
+        let blinkCount = 0;
+        let stressSessionStart = Date.now();
+        let lastEyeState = 'open';
+        let lipPurseStartTime = null;
+        let lipPurseDuration = 0;
+        let baselineLipDistance = null;
+        let lipCalibrationFrames = 0;
+        let lipCalibrationSum = 0;
+        let baselineEAR = null;
+        let earCalibrationFrames = 0;
+        let earCalibrationSum = 0;
+        let faceSizeHistory = [];
+        
+        function analyzeStress(faceLandmarks) {
+            if (!faceLandmarks || faceLandmarks.length < 468) {
+                return {
+                    blinkRate: 0,
+                    stressLevel: 'low',
+                    lipPursing: false,
+                    cognitiveLoad: false,
+                    leftEAR: 0.5,
+                    rightEAR: 0.5,
+                    averageEAR: 0.5
+                };
+            }
+            
+            const currentTime = Date.now();
+            
+            // Calculate face size for distance estimation
+            function calculateFaceSize(faceLandmarks) {
+                // Face width: left temple to right temple
+                const leftTemple = faceLandmarks[234];   // Left temple
+                const rightTemple = faceLandmarks[454];  // Right temple
+                const faceWidth = Math.abs(leftTemple.x - rightTemple.x);
+                
+                // Face height: forehead to chin
+                const forehead = faceLandmarks[10];   // Forehead center
+                const chin = faceLandmarks[152];      // Chin center  
+                const faceHeight = Math.abs(forehead.y - chin.y);
+                
+                // Face size is the average of width and height
+                const faceSize = (faceWidth + faceHeight) / 2.0;
+                
+                // Track face size history for stability
+                faceSizeHistory.push(faceSize);
+                if (faceSizeHistory.length > 30) faceSizeHistory.shift();
+                
+                return faceSize;
+            }
+            
+            // Get adaptive EAR threshold based on face size
+            function getAdaptiveEARThreshold(faceSize) {
+                if (faceSizeHistory.length < 5) return 0.2; // Default
+                
+                const avgFaceSize = faceSizeHistory.reduce((sum, size) => sum + size, 0) / faceSizeHistory.length;
+                
+                // Adjust threshold based on face size
+                if (avgFaceSize < 0.15) return 0.2 * 1.4;      // Very far - more sensitive
+                else if (avgFaceSize < 0.25) return 0.2 * 1.2; // Far - more sensitive  
+                else if (avgFaceSize > 0.4) return 0.2 * 0.8;  // Very close - less sensitive
+                else if (avgFaceSize > 0.3) return 0.2 * 0.9;  // Close - slightly less sensitive
+                else return 0.2; // Normal distance
+            }
+            
+            const faceSize = calculateFaceSize(faceLandmarks);
+            
+            // Calculate Eye Aspect Ratio (EAR) for blink detection
+            function calculateEAR(eyeLandmarks) {
+                // EAR = (||p2-p6|| + ||p3-p5||) / (2 * ||p1-p4||)
+                const p1 = eyeLandmarks[0], p2 = eyeLandmarks[1], p3 = eyeLandmarks[2];
+                const p4 = eyeLandmarks[3], p5 = eyeLandmarks[4], p6 = eyeLandmarks[5];
+                
+                const dist_p2_p6 = Math.sqrt(Math.pow(p2.x - p6.x, 2) + Math.pow(p2.y - p6.y, 2));
+                const dist_p3_p5 = Math.sqrt(Math.pow(p3.x - p5.x, 2) + Math.pow(p3.y - p5.y, 2));
+                const dist_p1_p4 = Math.sqrt(Math.pow(p1.x - p4.x, 2) + Math.pow(p1.y - p4.y, 2));
+                
+                if (dist_p1_p4 === 0) return 0.5;
+                return (dist_p2_p6 + dist_p3_p5) / (2.0 * dist_p1_p4);
+            }
+            
+            // Left eye landmarks (user's left eye)
+            const leftEye = [
+                faceLandmarks[33],   // p1 - left corner
+                faceLandmarks[160],  // p2 - top
+                faceLandmarks[158],  // p3 - top
+                faceLandmarks[133],  // p4 - right corner
+                faceLandmarks[153],  // p5 - bottom
+                faceLandmarks[144]   // p6 - bottom
+            ];
+            
+            // Right eye landmarks (user's right eye)
+            const rightEye = [
+                faceLandmarks[362],  // p1 - right corner
+                faceLandmarks[387],  // p2 - top
+                faceLandmarks[385],  // p3 - top
+                faceLandmarks[263],  // p4 - left corner
+                faceLandmarks[380],  // p5 - bottom
+                faceLandmarks[373]   // p6 - bottom
+            ];
+            
+            const leftEAR = calculateEAR(leftEye);
+            const rightEAR = calculateEAR(rightEye);
+            const averageEAR = (leftEAR + rightEAR) / 2.0;
+            
+            // Establish EAR baseline during calibration
+            if (baselineEAR === null && earCalibrationFrames < 60) {
+                earCalibrationFrames++;
+                earCalibrationSum += averageEAR;
+                
+                if (earCalibrationFrames >= 60) {
+                    baselineEAR = earCalibrationSum / earCalibrationFrames;
+                }
+            }
+            
+            // Adaptive blink detection
+            let adaptiveThreshold = getAdaptiveEARThreshold(faceSize);
+            
+            // Use baseline if available (60% of baseline or adaptive threshold, whichever is lower)
+            if (baselineEAR !== null) {
+                const relativeThreshold = baselineEAR * 0.6;
+                adaptiveThreshold = Math.min(adaptiveThreshold, relativeThreshold);
+            }
+            
+            if (averageEAR < adaptiveThreshold && lastEyeState === 'open') {
+                blinkCount++;
+                lastEyeState = 'closed';
+            } else if (averageEAR >= adaptiveThreshold) {
+                lastEyeState = 'open';
+            }
+            
+            // Calculate blink rate (blinks per minute)
+            const sessionDurationMinutes = (currentTime - stressSessionStart) / (1000 * 60);
+            const blinkRate = sessionDurationMinutes > 0 ? blinkCount / sessionDurationMinutes : 0;
+            
+            // Improved lip opening calculation using multiple landmarks
+            function calculateLipOpening(faceLandmarks) {
+                // Key lip landmarks for accurate measurement
+                const upperInner = [13, 82, 81, 80, 78];  // Upper inner lip
+                const lowerInner = [14, 87, 178, 88, 95]; // Lower inner lip
+                
+                let verticalDistances = [];
+                
+                // Method 1: Inner lip vertical distances
+                for (let i = 0; i < Math.min(upperInner.length, lowerInner.length); i++) {
+                    const upperPoint = faceLandmarks[upperInner[i]];
+                    const lowerPoint = faceLandmarks[lowerInner[i]];
+                    
+                    if (upperPoint && lowerPoint) {
+                        const distance = Math.abs(upperPoint.y - lowerPoint.y);
+                        verticalDistances.push(distance);
+                    }
+                }
+                
+                // Method 2: Center lip measurement (most reliable)
+                const upperCenter = faceLandmarks[13];  // Cupid's bow center
+                const lowerCenter = faceLandmarks[14];  // Lower lip center
+                
+                if (upperCenter && lowerCenter) {
+                    const centerDistance = Math.abs(upperCenter.y - lowerCenter.y);
+                    verticalDistances.push(centerDistance * 2); // Weight center more
+                }
+                
+                // Method 3: Lip corner measurements
+                const leftUpper = faceLandmarks[61];   // Left upper corner
+                const leftLower = faceLandmarks[84];   // Left lower corner
+                const rightUpper = faceLandmarks[291]; // Right upper corner
+                const rightLower = faceLandmarks[314]; // Right lower corner
+                
+                if (leftUpper && leftLower) {
+                    const leftDistance = Math.abs(leftUpper.y - leftLower.y);
+                    verticalDistances.push(leftDistance);
+                }
+                
+                if (rightUpper && rightLower) {
+                    const rightDistance = Math.abs(rightUpper.y - rightLower.y);
+                    verticalDistances.push(rightDistance);
+                }
+                
+                // Calculate average opening with outlier removal
+                if (verticalDistances.length > 2) {
+                    // Remove extreme values
+                    verticalDistances.sort((a, b) => a - b);
+                    // Remove top and bottom 20% to reduce noise
+                    const trimCount = Math.max(1, Math.floor(verticalDistances.length / 5));
+                    const trimmedDistances = verticalDistances.slice(trimCount, -trimCount);
+                    
+                    return trimmedDistances.reduce((sum, d) => sum + d, 0) / trimmedDistances.length;
+                } else {
+                    return verticalDistances.reduce((sum, d) => sum + d, 0) / verticalDistances.length || 0.05;
+                }
+            }
+            
+            const lipDistance = calculateLipOpening(faceLandmarks);
+            
+            let lipPursing = false;
+            
+            // Establish baseline during first 60 frames (2 seconds at 30fps)
+            if (baselineLipDistance === null && lipCalibrationFrames < 60) {
+                lipCalibrationFrames++;
+                lipCalibrationSum += lipDistance;
+                
+                if (lipCalibrationFrames >= 60) {
+                    baselineLipDistance = lipCalibrationSum / lipCalibrationFrames;
+                    console.log('📏 Lip baseline established:', baselineLipDistance.toFixed(4));
+                }
+            }
+            
+            // Only detect pursing after baseline is established
+            if (baselineLipDistance !== null) {
+                const LIP_COMPRESSION_RATIO = 0.7; // 70% of baseline opening
+                const compressionThreshold = baselineLipDistance * LIP_COMPRESSION_RATIO;
+                
+                if (lipDistance < compressionThreshold) {
+                    if (lipPurseStartTime === null) {
+                        lipPurseStartTime = currentTime;
+                    } else {
+                        lipPurseDuration = (currentTime - lipPurseStartTime) / 1000;
+                        lipPursing = lipPurseDuration >= 2.0; // 2 seconds threshold (was 3.0)
+                    }
+                } else {
+                    lipPurseStartTime = null;
+                    lipPurseDuration = 0;
+                }
+            }
+            
+            // Cognitive load assessment
+            const cognitiveLoad = blinkRate > 30; // 30 blinks per minute threshold
+            
+            // Overall stress level classification
+            let stressLevel = 'low';
+            let stressIndicators = 0;
+            
+            if (blinkRate > 30) stressIndicators += 2;
+            else if (blinkRate > 21) stressIndicators += 1; // 70% of threshold
+            
+            if (lipPursing) stressIndicators += 2;
+            
+            if (stressIndicators >= 3) stressLevel = 'high';
+            else if (stressIndicators >= 1) stressLevel = 'moderate';
+            
+            return {
+                blinkRate: blinkRate,
+                blinkCount: blinkCount,
+                stressLevel: stressLevel,
+                lipPursing: lipPursing,
+                lipPurseDuration: lipPurseDuration,
+                cognitiveLoad: cognitiveLoad,
+                leftEAR: leftEAR,
+                rightEAR: rightEAR,
+                averageEAR: averageEAR
+            };
+        }
+        
+        function updateStressUI(stressMetrics) {
+            if (!stressMetrics) {
+                document.getElementById('blink-rate').innerText = "--";
+                document.getElementById('stress-level').innerText = "--";
+                document.getElementById('lip-pursing').innerText = "--";
+                document.getElementById('cognitive-load').innerText = "--";
+                return;
+            }
+            
+            // Blink rate
+            let blinkText;
+            if (baselineEAR === null) {
+                blinkText = `👁️ Calibrating... (${earCalibrationFrames}/60)`;
+            } else {
+                blinkText = `${stressMetrics.blinkRate.toFixed(1)}/min (${stressMetrics.blinkCount})`;
+            }
+            document.getElementById('blink-rate').innerText = blinkText;
+            document.getElementById('blink-rate').style.color = 
+                baselineEAR === null ? '#FFA500' : 
+                (stressMetrics.blinkRate > 30 ? '#ff4444' : '#4CAF50');
+            
+            // Stress level
+            const stressText = stressMetrics.stressLevel.toUpperCase();
+            document.getElementById('stress-level').innerText = stressText;
+            const stressColors = {
+                'LOW': '#4CAF50',
+                'MODERATE': '#FFA500',
+                'HIGH': '#ff4444'
+            };
+            document.getElementById('stress-level').style.color = stressColors[stressText] || '#888888';
+            
+            // Lip pursing
+            let lipText;
+            if (baselineLipDistance === null) {
+                lipText = `📏 Calibrating... (${lipCalibrationFrames}/60)`;
+            } else if (stressMetrics.lipPursing) {
+                lipText = `⚠️ PURSING (${stressMetrics.lipPurseDuration.toFixed(1)}s)`;
+            } else if (lipPurseDuration > 0) {
+                lipText = `🤏 Compressing (${lipPurseDuration.toFixed(1)}s)`;
+            } else {
+                lipText = '✓ Relaxed';
+            }
+            document.getElementById('lip-pursing').innerText = lipText;
+            document.getElementById('lip-pursing').style.color = 
+                baselineLipDistance === null ? '#FFA500' : 
+                (stressMetrics.lipPursing ? '#ff4444' : 
+                 (lipPurseDuration > 0 ? '#FFA500' : '#4CAF50'));
+            
+            // Cognitive load
+            const cognitiveText = stressMetrics.cognitiveLoad ? '⚠️ HIGH' : '✓ Normal';
+            document.getElementById('cognitive-load').innerText = cognitiveText;
+            document.getElementById('cognitive-load').style.color = stressMetrics.cognitiveLoad ? '#ff4444' : '#4CAF50';
         }
         
         function updateGestureUI(gestureMetrics) {
