@@ -7,7 +7,7 @@
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/control_utils/control_utils.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/face_mesh.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/pose/pose.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/holistic/holistic.js"></script>
     <style>
         body { font-family: Arial, sans-serif; background: #1a1a1a; color: white; text-align: center; }
         .container { position: relative; width: 640px; height: 480px; margin: 20px auto; border: 3px solid #333; }
@@ -32,6 +32,12 @@
         <div class="metric">📐 Shoulder: <span id="shoulder-score">--</span></div>
         <div class="metric">🧍 Slouch: <span id="slouch-score">--</span></div>
         <div class="metric">🤞 Arms: <span id="arms-score">--</span></div>
+        <hr style="border-color: #555; margin: 15px 0;">
+        <div style="color: #FF6B6B; font-weight: bold;">🖐️ GESTURE ANALYSIS (NEW!)</div>
+        <div class="metric">👋 Hands Visible: <span id="hands-visible">--</span></div>
+        <div class="metric">😰 Face Touch: <span id="face-touch">--</span></div>
+        <div class="metric">🎭 Gestures: <span id="gestures">--</span></div>
+        <div class="metric">📊 Activity: <span id="activity-level">--</span></div>
     </div>
 
     <script>
@@ -47,28 +53,42 @@
         let baselineNoseShoulderDist = null;
         let armsCrossedHistory = [];
         
+        // NEW: Gesture analysis variables
+        let gestureSessionStart = Date.now();
+        let totalFaceTouches = 0;
+        let totalGestures = 0;
+        let leftHandHistory = [];
+        let rightHandHistory = [];
+        let gestureTimestamps = [];
+        
+        // Gesture analysis thresholds
+        const FACE_TOUCH_THRESHOLD = 0.1;
+        const GESTURE_HEIGHT_THRESHOLD = 0.1;
+        const GESTURE_VELOCITY_THRESHOLD = 0.02;
+        
         function onFaceResults(results) {
-            if (results.multiFaceLandmarks && results.multiFaceLandmarks.length > 0) {
-                currentLandmarks = results.multiFaceLandmarks[0];
-            }
+            // Face mesh results handled in holistic
         }
         
-        function onPoseResults(results) {
+        function onHolisticResults(results) {
             canvasCtx.save();
             canvasCtx.clearRect(0, 0, canvasElement.width, canvasElement.height);
             canvasCtx.drawImage(results.image, 0, 0, canvasElement.width, canvasElement.height);
             
-            // Draw face mesh if available
-            if (currentLandmarks) {
-                drawConnectors(canvasCtx, currentLandmarks, FACEMESH_TESSELATION, {color: '#C0C0C070', lineWidth: 1});
-                drawConnectors(canvasCtx, currentLandmarks, FACEMESH_RIGHT_EYE, {color: '#FF3030'});
-                drawConnectors(canvasCtx, currentLandmarks, FACEMESH_LEFT_EYE, {color: '#30FF30'});
+            // Store face landmarks
+            if (results.faceLandmarks) {
+                currentLandmarks = results.faceLandmarks;
+                
+                // Draw face mesh
+                drawConnectors(canvasCtx, results.faceLandmarks, FACEMESH_TESSELATION, {color: '#C0C0C070', lineWidth: 1});
+                drawConnectors(canvasCtx, results.faceLandmarks, FACEMESH_RIGHT_EYE, {color: '#FF3030'});
+                drawConnectors(canvasCtx, results.faceLandmarks, FACEMESH_LEFT_EYE, {color: '#30FF30'});
                 
                 // Eye contact calculation
-                const leftInner = currentLandmarks[33];
-                const leftOuter = currentLandmarks[133];
+                const leftInner = results.faceLandmarks[33];
+                const leftOuter = results.faceLandmarks[133];
                 const eyeWidth = Math.abs(leftInner.x - leftOuter.x);
-                const leftIris = currentLandmarks[468] || leftInner;
+                const leftIris = results.faceLandmarks[468] || leftInner;
                 const eyeCenterDist = Math.abs(leftIris.x - ((leftInner.x + leftOuter.x) / 2));
                 const eyeContact = Math.max(0, 1.0 - (eyeCenterDist / eyeWidth)).toFixed(2);
                 document.getElementById('eye-score').innerText = eyeContact;
@@ -108,12 +128,39 @@
                 // YOUR POSTURE ANALYSIS
                 const postureMetrics = analyzePosture(results.poseLandmarks);
                 updatePostureUI(postureMetrics);
-                
-                document.getElementById('status').innerText = "✅ Full Body Tracking Active";
-            } else if (currentLandmarks) {
-                document.getElementById('status').innerText = "✅ Face Only - Step back for full body";
+            }
+            
+            // NEW: Draw hand landmarks if available
+            if (results.leftHandLandmarks) {
+                drawConnectors(canvasCtx, results.leftHandLandmarks, HAND_CONNECTIONS, {color: '#FF00FF', lineWidth: 2});
+                drawLandmarks(canvasCtx, results.leftHandLandmarks, {color: '#FF00FF', radius: 3});
+            }
+            
+            if (results.rightHandLandmarks) {
+                drawConnectors(canvasCtx, results.rightHandLandmarks, HAND_CONNECTIONS, {color: '#00FFFF', lineWidth: 2});
+                drawLandmarks(canvasCtx, results.rightHandLandmarks, {color: '#00FFFF', radius: 3});
+            }
+            
+            // NEW: Analyze hand gestures
+            const gestureMetrics = analyzeGestures(
+                results.leftHandLandmarks,
+                results.rightHandLandmarks,
+                results.faceLandmarks ? results.faceLandmarks[1] : null, // Nose landmark
+                results.poseLandmarks ? (results.poseLandmarks[11].y + results.poseLandmarks[12].y) / 2 : 0.5
+            );
+            updateGestureUI(gestureMetrics);
+            
+            // Update status
+            let statusParts = [];
+            if (results.faceLandmarks) statusParts.push("Face");
+            if (results.poseLandmarks) statusParts.push("Pose");
+            if (results.leftHandLandmarks) statusParts.push("L-Hand");
+            if (results.rightHandLandmarks) statusParts.push("R-Hand");
+            
+            if (statusParts.length > 0) {
+                document.getElementById('status').innerText = `✅ Tracking: ${statusParts.join(', ')}`;
             } else {
-                document.getElementById('status').innerText = "⚠️ No detection";
+                document.getElementById('status').innerText = "⚠️ No detection - step back";
             }
             
             canvasCtx.restore();
@@ -213,47 +260,220 @@
             document.getElementById('arms-score').innerText = armsText;
             document.getElementById('arms-score').style.color = metrics.arms_crossed ? '#ff4444' : '#4CAF50';
         }
+        
+        // NEW: GESTURE ANALYSIS FUNCTIONS
+        function calculateDistance(point1, point2) {
+            if (!point1 || !point2) return Infinity;
+            return Math.sqrt(
+                Math.pow(point1.x - point2.x, 2) + 
+                Math.pow(point1.y - point2.y, 2)
+            );
+        }
+        
+        function analyzeGestures(leftHandLandmarks, rightHandLandmarks, noseLandmark, shoulderY) {
+            const currentTime = Date.now();
+            
+            // DEBUG: Log what we're receiving
+            console.log('Gesture Analysis Debug:', {
+                leftHand: leftHandLandmarks ? `${leftHandLandmarks.length} landmarks` : 'null',
+                rightHand: rightHandLandmarks ? `${rightHandLandmarks.length} landmarks` : 'null',
+                nose: noseLandmark ? 'detected' : 'null',
+                shoulderY: shoulderY
+            });
+            
+            // Check hand visibility
+            const leftHandVisible = leftHandLandmarks && leftHandLandmarks.length > 0;
+            const rightHandVisible = rightHandLandmarks && rightHandLandmarks.length > 0;
+            
+            console.log('Hand visibility:', { leftHandVisible, rightHandVisible });
+            
+            // Face-touch detection
+            let faceTouchDetected = false;
+            
+            // Check left hand index finger (landmark 8) to nose distance
+            if (leftHandVisible && noseLandmark && leftHandLandmarks[8]) {
+                const distance = calculateDistance(leftHandLandmarks[8], noseLandmark);
+                console.log('Left hand to nose distance:', distance);
+                if (distance < FACE_TOUCH_THRESHOLD) {
+                    faceTouchDetected = true;
+                    totalFaceTouches++;
+                    console.log('LEFT HAND FACE TOUCH DETECTED!');
+                }
+            }
+            
+            // Check right hand index finger (landmark 8) to nose distance
+            if (rightHandVisible && noseLandmark && rightHandLandmarks[8]) {
+                const distance = calculateDistance(rightHandLandmarks[8], noseLandmark);
+                console.log('Right hand to nose distance:', distance);
+                if (distance < FACE_TOUCH_THRESHOLD) {
+                    faceTouchDetected = true;
+                    totalFaceTouches++;
+                    console.log('RIGHT HAND FACE TOUCH DETECTED!');
+                }
+            }
+            
+            // Gesture counting (hands above shoulders with movement)
+            let activeGestures = 0;
+            let leftAboveShoulders = false;
+            let rightAboveShoulders = false;
+            
+            // Analyze left hand
+            if (leftHandVisible && leftHandLandmarks[0]) {
+                const wrist = leftHandLandmarks[0];
+                console.log('Left wrist Y:', wrist.y, 'Shoulder Y:', shoulderY, 'Threshold:', shoulderY - GESTURE_HEIGHT_THRESHOLD);
+                
+                if (wrist.y < (shoulderY - GESTURE_HEIGHT_THRESHOLD)) {
+                    leftAboveShoulders = true;
+                    console.log('Left hand above shoulders!');
+                    
+                    // Track movement
+                    leftHandHistory.push({x: wrist.x, y: wrist.y, time: currentTime});
+                    if (leftHandHistory.length > 5) leftHandHistory.shift();
+                    
+                    // Calculate movement velocity
+                    if (leftHandHistory.length >= 3) {
+                        let totalMovement = 0;
+                        for (let i = 1; i < leftHandHistory.length; i++) {
+                            const prev = leftHandHistory[i-1];
+                            const curr = leftHandHistory[i];
+                            const movement = Math.sqrt(
+                                Math.pow(curr.x - prev.x, 2) + 
+                                Math.pow(curr.y - prev.y, 2)
+                            );
+                            totalMovement += movement;
+                        }
+                        
+                        console.log('Left hand movement:', totalMovement);
+                        if (totalMovement > GESTURE_VELOCITY_THRESHOLD) {
+                            activeGestures++;
+                            totalGestures++;
+                            gestureTimestamps.push(currentTime);
+                            console.log('Left hand gesture detected!');
+                        }
+                    }
+                }
+            }
+            
+            // Analyze right hand (same logic)
+            if (rightHandVisible && rightHandLandmarks[0]) {
+                const wrist = rightHandLandmarks[0];
+                console.log('Right wrist Y:', wrist.y, 'Shoulder Y:', shoulderY, 'Threshold:', shoulderY - GESTURE_HEIGHT_THRESHOLD);
+                
+                if (wrist.y < (shoulderY - GESTURE_HEIGHT_THRESHOLD)) {
+                    rightAboveShoulders = true;
+                    console.log('Right hand above shoulders!');
+                    
+                    // Track movement
+                    rightHandHistory.push({x: wrist.x, y: wrist.y, time: currentTime});
+                    if (rightHandHistory.length > 5) rightHandHistory.shift();
+                    
+                    // Calculate movement velocity
+                    if (rightHandHistory.length >= 3) {
+                        let totalMovement = 0;
+                        for (let i = 1; i < rightHandHistory.length; i++) {
+                            const prev = rightHandHistory[i-1];
+                            const curr = rightHandHistory[i];
+                            const movement = Math.sqrt(
+                                Math.pow(curr.x - prev.x, 2) + 
+                                Math.pow(curr.y - prev.y, 2)
+                            );
+                            totalMovement += movement;
+                        }
+                        
+                        console.log('Right hand movement:', totalMovement);
+                        if (totalMovement > GESTURE_VELOCITY_THRESHOLD) {
+                            activeGestures++;
+                            totalGestures++;
+                            gestureTimestamps.push(currentTime);
+                            console.log('Right hand gesture detected!');
+                        }
+                    }
+                }
+            }
+            
+            // Calculate gesture frequency
+            const sessionDurationMinutes = (currentTime - gestureSessionStart) / (1000 * 60);
+            const gestureFrequency = sessionDurationMinutes > 0 ? totalGestures / sessionDurationMinutes : 0;
+            
+            // Classify activity level
+            let activityLevel = 'passive';
+            if (gestureFrequency >= 15) activityLevel = 'dynamic';
+            else if (gestureFrequency >= 5) activityLevel = 'moderate';
+            
+            const result = {
+                leftHandVisible,
+                rightHandVisible,
+                faceTouchDetected,
+                faceTouchCount: totalFaceTouches,
+                activeGestures,
+                gestureFrequency,
+                activityLevel,
+                leftAboveShoulders,
+                rightAboveShoulders
+            };
+            
+            console.log('Final gesture result:', result);
+            return result;
+        }
+        
+        function updateGestureUI(gestureMetrics) {
+            // Hands visible
+            const handsText = `L:${gestureMetrics.leftHandVisible ? '✓' : '✗'} R:${gestureMetrics.rightHandVisible ? '✓' : '✗'}`;
+            document.getElementById('hands-visible').innerText = handsText;
+            
+            // Face touch
+            const faceTouch = gestureMetrics.faceTouchDetected ? 
+                `⚠️ TOUCHING (${gestureMetrics.faceTouchCount || 0})` : 
+                `✓ Clear (${gestureMetrics.faceTouchCount || 0})`;
+            document.getElementById('face-touch').innerText = faceTouch;
+            document.getElementById('face-touch').style.color = gestureMetrics.faceTouchDetected ? '#ff4444' : '#4CAF50';
+            
+            // Gestures
+            const gesturesText = `${gestureMetrics.activeGestures || 0} (${(gestureMetrics.gestureFrequency || 0).toFixed(1)}/min)`;
+            document.getElementById('gestures').innerText = gesturesText;
+            
+            // Activity level
+            const activityText = gestureMetrics.activityLevel || 'passive';
+            document.getElementById('activity-level').innerText = activityText.toUpperCase();
+            
+            // Color code activity level
+            const activityColors = {
+                'passive': '#888888',
+                'moderate': '#FFA500',
+                'dynamic': '#FF6B6B'
+            };
+            document.getElementById('activity-level').style.color = activityColors[activityText] || '#888888';
+        }
 
         // Initialize MediaPipe models
-        console.log("🚀 Initializing MediaPipe...");
+        console.log("🚀 Initializing MediaPipe Holistic...");
         
-        // FaceMesh
-        const faceMesh = new FaceMesh({
-            locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/${file}`
+        // Holistic (Face + Pose + Hands all in one!)
+        const holistic = new Holistic({
+            locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/holistic/${file}`
         });
-        faceMesh.setOptions({
-            maxNumFaces: 1,
-            refineLandmarks: true,
-            minDetectionConfidence: 0.5,
-            minTrackingConfidence: 0.5
-        });
-        faceMesh.onResults(onFaceResults);
-        
-        // Pose (YOUR SYSTEM!)
-        const pose = new Pose({
-            locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/pose/${file}`
-        });
-        pose.setOptions({
+        holistic.setOptions({
             modelComplexity: 1,
             smoothLandmarks: true,
             enableSegmentation: false,
+            smoothSegmentation: false,
+            refineFaceLandmarks: true,
             minDetectionConfidence: 0.5,
             minTrackingConfidence: 0.5
         });
-        pose.onResults(onPoseResults);
+        holistic.onResults(onHolisticResults);
 
         // Camera
         const camera = new Camera(videoElement, {
             onFrame: async () => {
-                await faceMesh.send({image: videoElement});
-                await pose.send({image: videoElement});
+                await holistic.send({image: videoElement});
             },
             width: 640,
             height: 480
         });
         
         camera.start().then(() => {
-            document.getElementById('status').innerText = "📷 Camera started - Loading models...";
+            document.getElementById('status').innerText = "📷 Camera started - Loading Holistic model...";
         }).catch((error) => {
             document.getElementById('status').innerText = "❌ Camera failed: " + error.message;
             console.error("Camera error:", error);
