@@ -125,8 +125,18 @@ async def get_report(session_id: str):
     session = sessions[session_id]
     analytics = session.get_analytics()
     
-    # Generate AI Feedback based on the full transcript
-    ai_report = ai.generate_feedback_report(analytics["transcript_text"])
+    # Use cached AI report if available, otherwise generate new one
+    if session.cached_ai_report is None:
+        print(f"🔄 Generating new AI report for session {session_id}")
+        ai_report = ai.generate_feedback_report(
+            analytics["transcript_text"],
+            behavioral_metrics=analytics  # Pass all analytics including behavioral data
+        )
+        # Cache the report to avoid regenerating on page refresh
+        session.cached_ai_report = ai_report
+    else:
+        print(f"✅ Using cached AI report for session {session_id}")
+        ai_report = session.cached_ai_report
     
     return {
         "analytics": analytics,
