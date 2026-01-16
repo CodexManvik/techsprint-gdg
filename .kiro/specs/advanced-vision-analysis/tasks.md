@@ -146,34 +146,34 @@
   - Integrate main `analyze()` method with is_speaking parameter
   - _Requirements: 4.1, 4.2, 4.3, 4.4, 4.5_
 
-- [ ] 6. Build Anti-Cheating Integrity Checker
-- [ ] 6.1 Create IntegrityChecker class structure
+- [x] 6. Build Anti-Cheating Integrity Checker
+- [x] 6.1 Create IntegrityChecker class structure
   - Create `engine/analyzers/integrity_checker.py` with class skeleton
   - Define IntegrityMetrics and IntegrityReport dataclasses
   - Initialize thresholds (gaze_cluster=0.05, cheat_flag=5)
   - _Requirements: 5.1, 5.2, 5.3, 5.4_
 
-- [ ] 6.2 Implement gaze position estimation
+- [x] 6.2 Implement gaze position estimation
   - Write `_calculate_gaze_position()` using eye landmark centroids
   - Average positions of left and right eye inner/outer corners
   - Return normalized (x, y) gaze coordinates
   - _Requirements: 5.1_
 
-- [ ] 6.3 Implement repeated pattern detection
+- [x] 6.3 Implement repeated pattern detection
   - Write `_detect_repeated_pattern()` tracking gaze at speech onset
   - Maintain history of gaze positions when user starts speaking
   - Cluster gaze positions within 0.05 normalized units
   - Increment cheat_flag when same cluster is repeatedly targeted
   - _Requirements: 5.2_
 
-- [ ] 6.4 Implement integrity warning system
+- [x] 6.4 Implement integrity warning system
   - Flag integrity_warning when cheat_flag_count exceeds 5
   - Track suspicious_segments with timestamps
   - Calculate integrity_score (1.0 = clean, 0.0 = highly suspicious)
   - Implement `get_session_report()` for final integrity assessment
   - _Requirements: 5.3, 5.4_
 
-- [ ] 6.5 Integrate integrity analysis
+- [x] 6.5 Integrate integrity analysis
   - Implement main `analyze()` method with speech_onset parameter
   - Handle cases where face landmarks are insufficient
   - Return comprehensive IntegrityMetrics dataclass

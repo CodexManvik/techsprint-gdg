@@ -2,11 +2,12 @@ import numpy as np
 from collections import deque
 import time
 
-# Import our advanced vision components (Task 1-5)
+# Import our advanced vision components (Task 1-6)
 from engine.holistic_processor import HolisticProcessor
 from engine.signal_smoother import SignalSmoother
 from engine.analyzers.posture_analyzer import PostureAnalyzer
 from engine.analyzers.stress_analyzer import StressAnalyzer
+from engine.analyzers.integrity_checker import IntegrityChecker
 
 class VisionEngine:
     def __init__(self):
@@ -14,7 +15,7 @@ class VisionEngine:
         self.nose_history = deque(maxlen=20)
         self.gesture_history = deque(maxlen=30)
         
-        # NEW: Advanced vision components (Task 1-5)
+        # NEW: Advanced vision components (Task 1-6)
         print("🚀 Initializing Advanced Vision System...")
         self.holistic_processor = HolisticProcessor()
         # Balanced smoothing for real-time feel
@@ -26,6 +27,7 @@ class VisionEngine:
         )
         self.posture_analyzer = PostureAnalyzer()
         self.stress_analyzer = StressAnalyzer()  # Task 5: Stress detection
+        self.integrity_checker = IntegrityChecker()  # Task 6: Integrity checking
         self.frame_count = 0
         self.last_valid_metrics = None  # Cache last valid result
         print("✅ Advanced Vision System Ready!") 
@@ -68,7 +70,7 @@ class VisionEngine:
 
         return "neutral"
 
-    def analyze_frame(self, landmarks_or_frame, is_speaking=False):
+    def analyze_frame(self, landmarks_or_frame, is_speaking=False, speech_onset=False):
         """
         Enhanced frame analysis with backward compatibility.
         
@@ -79,19 +81,20 @@ class VisionEngine:
         Args:
             landmarks_or_frame: Either MediaPipe landmarks or raw video frame
             is_speaking: Whether user is currently speaking (for stress analysis)
+            speech_onset: Whether user just started speaking (for integrity checking)
         """
         # Detect if we're getting a raw frame or landmarks
         is_raw_frame = isinstance(landmarks_or_frame, np.ndarray)
         
         if is_raw_frame:
-            # NEW MODE: Full holistic analysis with posture and stress
-            return self._analyze_holistic(landmarks_or_frame, is_speaking)
+            # NEW MODE: Full holistic analysis with posture, stress, and integrity
+            return self._analyze_holistic(landmarks_or_frame, is_speaking, speech_onset)
         else:
             # LEGACY MODE: Face-only analysis
             return self._analyze_legacy(landmarks_or_frame)
     
-    def _analyze_holistic(self, frame, is_speaking=False):
-        """NEW: Full-body holistic analysis with posture and stress detection."""
+    def _analyze_holistic(self, frame, is_speaking=False, speech_onset=False):
+        """NEW: Full-body holistic analysis with posture, stress, and integrity detection."""
         self.frame_count += 1
         timestamp = time.time()
         
@@ -128,6 +131,17 @@ class VisionEngine:
             else:
                 # No face landmarks - use default stress metrics
                 stress_metrics = self.stress_analyzer.analyze(None, is_speaking)
+            
+            # Analyze integrity (Task 6) - needs face landmarks
+            integrity_metrics = None
+            if smoothed_face:
+                integrity_metrics = self.integrity_checker.analyze(smoothed_face, speech_onset)
+            elif holistic_results.face_landmarks:
+                # Fallback to unsmoothed if smoothing failed
+                integrity_metrics = self.integrity_checker.analyze(holistic_results.face_landmarks, speech_onset)
+            else:
+                # No face landmarks - use default integrity metrics
+                integrity_metrics = self.integrity_checker.analyze(None, speech_onset)
             
             # Legacy face analysis (if face landmarks available)
             legacy_metrics = {}
@@ -175,6 +189,17 @@ class VisionEngine:
                     "right_ear": stress_metrics.right_ear if stress_metrics else 0.5,
                     "average_ear": stress_metrics.average_ear if stress_metrics else 0.5,
                 } if stress_metrics else self._get_default_stress_metrics(),
+                
+                # NEW: Integrity metrics (Task 6)
+                "integrity": {
+                    "gaze_x": integrity_metrics.gaze_x if integrity_metrics else 0.5,
+                    "gaze_y": integrity_metrics.gaze_y if integrity_metrics else 0.5,
+                    "gaze_cluster_id": integrity_metrics.gaze_cluster_id if integrity_metrics else None,
+                    "cheat_flag_count": integrity_metrics.cheat_flag_count if integrity_metrics else 0,
+                    "integrity_warning": integrity_metrics.integrity_warning if integrity_metrics else False,
+                    "integrity_score": integrity_metrics.integrity_score if integrity_metrics else 1.0,
+                    "suspicious_segments": integrity_metrics.suspicious_segments if integrity_metrics else [],
+                } if integrity_metrics else self._get_default_integrity_metrics(),
                 
                 # NEW: Pose landmarks for frontend visualization
                 "pose_landmarks_for_drawing": [
@@ -282,6 +307,18 @@ class VisionEngine:
             "average_ear": 0.5,
         }
     
+    def _get_default_integrity_metrics(self):
+        """Return default integrity metrics when no face detection is possible."""
+        return {
+            "gaze_x": 0.5,
+            "gaze_y": 0.5,
+            "gaze_cluster_id": None,
+            "cheat_flag_count": 0,
+            "integrity_warning": False,
+            "integrity_score": 1.0,
+            "suspicious_segments": [],
+        }
+    
     def _get_default_metrics(self):
         """Return default metrics when no detection is possible."""
         return {
@@ -301,6 +338,7 @@ class VisionEngine:
                 "shoulder_stability": 1.0,
             },
             "stress": self._get_default_stress_metrics(),
+            "integrity": self._get_default_integrity_metrics(),
             "frame_number": self.frame_count,
             "timestamp": time.time(),
             "mode": "default"
@@ -311,7 +349,7 @@ class VisionEngine:
         Get comprehensive session summary from all analyzers.
         
         Returns:
-            Dictionary with session-wide metrics from posture and stress analyzers
+            Dictionary with session-wide metrics from all analyzers
         """
         summary = {
             "session_duration_minutes": (time.time() - getattr(self, 'session_start_time', time.time())) / 60.0,
@@ -325,6 +363,19 @@ class VisionEngine:
         # Add stress summary
         if hasattr(self, 'stress_analyzer'):
             summary["stress"] = self.stress_analyzer.get_session_summary()
+        
+        # Add integrity report
+        if hasattr(self, 'integrity_checker'):
+            integrity_report = self.integrity_checker.get_session_report()
+            summary["integrity"] = {
+                "total_speech_onsets": integrity_report.total_speech_onsets,
+                "cheat_flag_count": integrity_report.cheat_flag_count,
+                "integrity_score": integrity_report.integrity_score,
+                "integrity_assessment": integrity_report.integrity_assessment,
+                "suspicious_segments": integrity_report.suspicious_segments,
+                "gaze_clusters": integrity_report.gaze_clusters,
+                "recommendations": integrity_report.recommendations
+            }
         
         return summary
     

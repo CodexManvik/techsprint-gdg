@@ -44,6 +44,14 @@
         <div class="metric">😰 Stress Level: <span id="stress-level">--</span></div>
         <div class="metric">💋 Lip Pursing: <span id="lip-pursing">--</span></div>
         <div class="metric">🧠 Cognitive Load: <span id="cognitive-load">--</span></div>
+        <hr style="border-color: #555; margin: 15px 0;">
+        <div style="color: #00CED1; font-weight: bold;">🔍 INTEGRITY CHECK (NEW!)</div>
+        <div class="metric">🎤 Speech Onset: <span id="speech-onset-indicator">--</span></div>
+        <div class="metric">👁️ Gaze Position: <span id="gaze-position">--</span></div>
+        <div class="metric">🎯 Integrity Score: <span id="integrity-score">--</span></div>
+        <div class="metric">⚠️ Cheat Flags: <span id="cheat-flags">--</span></div>
+        <div class="metric">🚨 Warning: <span id="integrity-warning">--</span></div>
+        <div style="font-size: 11px; color: #888; margin-top: 10px;">Press SPACE to simulate speech</div>
     </div>
 
     <script>
@@ -159,6 +167,77 @@
             // NEW: Analyze stress signals
             const stressMetrics = analyzeStress(results.faceLandmarks);
             updateStressUI(stressMetrics);
+            
+            // NEW: Analyze integrity (speech onset detection via SPACE key)
+            // Press SPACE to simulate speech onset for testing
+            const integrityMetrics = analyzeIntegrity(results.faceLandmarks, speechOnsetTriggered);
+            updateIntegrityUI(integrityMetrics, speechOnsetTriggered);
+            
+            // Draw gaze indicator on canvas
+            if (integrityMetrics && results.faceLandmarks) {
+                const gazeScreenX = integrityMetrics.gazeX * canvasElement.width;
+                const gazeScreenY = integrityMetrics.gazeY * canvasElement.height;
+                
+                // Draw center reference point (where you should look for "clean" integrity)
+                const centerX = canvasElement.width / 2;
+                const centerY = canvasElement.height / 2;
+                
+                canvasCtx.strokeStyle = '#888888';
+                canvasCtx.lineWidth = 1;
+                canvasCtx.setLineDash([5, 5]);
+                
+                // Center crosshair
+                canvasCtx.beginPath();
+                canvasCtx.moveTo(centerX - 30, centerY);
+                canvasCtx.lineTo(centerX + 30, centerY);
+                canvasCtx.stroke();
+                
+                canvasCtx.beginPath();
+                canvasCtx.moveTo(centerX, centerY - 30);
+                canvasCtx.lineTo(centerX, centerY + 30);
+                canvasCtx.stroke();
+                
+                canvasCtx.setLineDash([]);
+                
+                // Draw gaze/head position crosshair
+                canvasCtx.strokeStyle = speechOnsetTriggered ? '#00FF00' : '#00CED1';
+                canvasCtx.lineWidth = 3;
+                
+                // Horizontal line
+                canvasCtx.beginPath();
+                canvasCtx.moveTo(gazeScreenX - 25, gazeScreenY);
+                canvasCtx.lineTo(gazeScreenX + 25, gazeScreenY);
+                canvasCtx.stroke();
+                
+                // Vertical line
+                canvasCtx.beginPath();
+                canvasCtx.moveTo(gazeScreenX, gazeScreenY - 25);
+                canvasCtx.lineTo(gazeScreenX, gazeScreenY + 25);
+                canvasCtx.stroke();
+                
+                // Circle
+                canvasCtx.beginPath();
+                canvasCtx.arc(gazeScreenX, gazeScreenY, 15, 0, 2 * Math.PI);
+                canvasCtx.stroke();
+                
+                // Label
+                canvasCtx.fillStyle = speechOnsetTriggered ? '#00FF00' : '#00CED1';
+                canvasCtx.font = 'bold 14px Arial';
+                canvasCtx.fillText('HEAD', gazeScreenX + 20, gazeScreenY - 20);
+                
+                // Show distance from center
+                const distFromCenter = Math.sqrt(
+                    Math.pow(integrityMetrics.gazeX - 0.5, 2) + 
+                    Math.pow(integrityMetrics.gazeY - 0.5, 2)
+                );
+                canvasCtx.font = '12px Arial';
+                canvasCtx.fillText(`Dist: ${distFromCenter.toFixed(2)}`, gazeScreenX + 20, gazeScreenY - 5);
+            }
+            
+            // Reset speech onset flag after processing
+            if (speechOnsetTriggered) {
+                speechOnsetTriggered = false;
+            }
             
             // Update status
             let statusParts = [];
@@ -734,6 +813,180 @@
             document.getElementById('cognitive-load').style.color = stressMetrics.cognitiveLoad ? '#ff4444' : '#4CAF50';
         }
         
+        // NEW: Integrity Analysis Function
+        let integrityGazeClusters = [];
+        let integrityCheatFlags = 0;
+        let integritySpeechOnsets = 0;
+        
+        function analyzeIntegrity(faceLandmarks, speechOnset = false) {
+            if (!faceLandmarks || faceLandmarks.length < 468) {
+                return {
+                    gazeX: 0.5,
+                    gazeY: 0.5,
+                    integrityScore: 1.0,
+                    cheatFlags: 0,
+                    integrityWarning: false
+                };
+            }
+            
+            // Use nose position as proxy for head/gaze direction
+            // This is more reliable than trying to calculate actual gaze from eye landmarks
+            const nose = faceLandmarks[1];  // Nose tip
+            const gazeX = nose.x;
+            const gazeY = nose.y;
+            
+            // Alternative: Use face center
+            // const leftCheek = faceLandmarks[234];
+            // const rightCheek = faceLandmarks[454];
+            // const gazeX = (leftCheek.x + rightCheek.x) / 2.0;
+            // const gazeY = (leftCheek.y + rightCheek.y) / 2.0;
+            
+            // Calculate distance from center for current gaze
+            const currentDistanceFromCenter = Math.sqrt(
+                Math.pow(gazeX - 0.5, 2) + 
+                Math.pow(gazeY - 0.5, 2)
+            );
+            
+            // Log current gaze position
+            if (speechOnset) {
+                console.log(`👁️ Current head position: (${gazeX.toFixed(3)}, ${gazeY.toFixed(3)}), distance from center: ${currentDistanceFromCenter.toFixed(3)}`);
+            }
+            
+            // Track gaze at speech onset
+            if (speechOnset) {
+                integritySpeechOnsets++;
+                
+                console.log(`📍 Speech onset #${integritySpeechOnsets}: Head at (${gazeX.toFixed(2)}, ${gazeY.toFixed(2)})`);
+                
+                // Find or create cluster
+                const CLUSTER_THRESHOLD = 0.08;  // Increased from 0.05 for more lenient clustering
+                let foundCluster = false;
+                let clusterIndex = -1;
+                
+                for (let i = 0; i < integrityGazeClusters.length; i++) {
+                    const cluster = integrityGazeClusters[i];
+                    const distance = Math.sqrt(
+                        Math.pow(gazeX - cluster.x, 2) + 
+                        Math.pow(gazeY - cluster.y, 2)
+                    );
+                    
+                    if (distance < CLUSTER_THRESHOLD) {
+                        cluster.visits++;
+                        foundCluster = true;
+                        clusterIndex = i;
+                        
+                        console.log(`   ✓ Matched cluster ${i}: ${cluster.visits} visits at (${cluster.x.toFixed(2)}, ${cluster.y.toFixed(2)})`);
+                        
+                        // Check if suspicious (off-center and frequent)
+                        const distanceFromCenter = Math.sqrt(
+                            Math.pow(cluster.x - 0.5, 2) + 
+                            Math.pow(cluster.y - 0.5, 2)
+                        );
+                        
+                        console.log(`   📏 Distance from center: ${distanceFromCenter.toFixed(3)} (threshold: 0.10)`);
+                        
+                        // Even more lenient threshold: 0.10 instead of 0.15
+                        // This means any head position more than 10% away from center
+                        if (cluster.visits >= 3 && distanceFromCenter > 0.10) {
+                            integrityCheatFlags++;
+                            console.log(`   🚨 SUSPICIOUS! Cluster ${i} flagged! Total flags: ${integrityCheatFlags}`);
+                        } else if (cluster.visits >= 3) {
+                            console.log(`   ℹ️ Cluster has 3+ visits but too close to center (${distanceFromCenter.toFixed(3)} <= 0.10)`);
+                        } else {
+                            console.log(`   ℹ️ Cluster only has ${cluster.visits} visits (need 3+)`);
+                        }
+                        break;
+                    }
+                }
+                
+                if (!foundCluster) {
+                    integrityGazeClusters.push({
+                        x: gazeX,
+                        y: gazeY,
+                        visits: 1
+                    });
+                    const newClusterDistance = Math.sqrt(
+                        Math.pow(gazeX - 0.5, 2) + 
+                        Math.pow(gazeY - 0.5, 2)
+                    );
+                    console.log(`   ➕ New cluster ${integrityGazeClusters.length - 1} created at (${gazeX.toFixed(2)}, ${gazeY.toFixed(2)}), distance from center: ${newClusterDistance.toFixed(3)}`);
+                }
+                
+                console.log(`   📊 Total clusters: ${integrityGazeClusters.length}, Total speech onsets: ${integritySpeechOnsets}, Flags: ${integrityCheatFlags}`);
+            }
+            
+            // Calculate integrity score
+            let integrityScore = 1.0;
+            
+            // Penalize for cheat flags
+            integrityScore -= Math.min(0.9, integrityCheatFlags * 0.15);
+            
+            // Penalize for high cluster concentration
+            if (integrityGazeClusters.length > 0 && integritySpeechOnsets > 0) {
+                const maxVisits = Math.max(...integrityGazeClusters.map(c => c.visits));
+                const concentration = maxVisits / integritySpeechOnsets;
+                
+                if (concentration > 0.5) {
+                    integrityScore -= (concentration - 0.5) * 0.4;
+                }
+            }
+            
+            integrityScore = Math.max(0.0, Math.min(1.0, integrityScore));
+            
+            return {
+                gazeX: gazeX,
+                gazeY: gazeY,
+                integrityScore: integrityScore,
+                cheatFlags: integrityCheatFlags,
+                integrityWarning: integrityCheatFlags >= 5
+            };
+        }
+        
+        function updateIntegrityUI(integrityMetrics, speechOnset = false) {
+            if (!integrityMetrics) {
+                document.getElementById('speech-onset-indicator').innerText = "--";
+                document.getElementById('gaze-position').innerText = "--";
+                document.getElementById('integrity-score').innerText = "--";
+                document.getElementById('cheat-flags').innerText = "--";
+                document.getElementById('integrity-warning').innerText = "--";
+                return;
+            }
+            
+            // Speech onset indicator
+            const onsetText = speechOnset ? '🎤 SPEAKING' : '🔇 Silent';
+            document.getElementById('speech-onset-indicator').innerText = onsetText;
+            document.getElementById('speech-onset-indicator').style.color = speechOnset ? '#00FF00' : '#888888';
+            
+            // Gaze position
+            const gazeText = `(${integrityMetrics.gazeX.toFixed(2)}, ${integrityMetrics.gazeY.toFixed(2)})`;
+            document.getElementById('gaze-position').innerText = gazeText;
+            
+            // Integrity score
+            const scoreText = `${(integrityMetrics.integrityScore * 100).toFixed(0)}%`;
+            document.getElementById('integrity-score').innerText = scoreText;
+            
+            // Color code based on score
+            let scoreColor = '#4CAF50';  // Green
+            if (integrityMetrics.integrityScore < 0.5) {
+                scoreColor = '#ff4444';  // Red
+            } else if (integrityMetrics.integrityScore < 0.8) {
+                scoreColor = '#FFA500';  // Orange
+            }
+            document.getElementById('integrity-score').style.color = scoreColor;
+            
+            // Cheat flags
+            const flagsText = `${integrityMetrics.cheatFlags}`;
+            document.getElementById('cheat-flags').innerText = flagsText;
+            document.getElementById('cheat-flags').style.color = 
+                integrityMetrics.cheatFlags > 0 ? '#ff4444' : '#4CAF50';
+            
+            // Warning
+            const warningText = integrityMetrics.integrityWarning ? '🚨 ALERT' : '✓ Clean';
+            document.getElementById('integrity-warning').innerText = warningText;
+            document.getElementById('integrity-warning').style.color = 
+                integrityMetrics.integrityWarning ? '#ff4444' : '#4CAF50';
+        }
+        
         function updateGestureUI(gestureMetrics) {
             // Hands visible
             const handsText = `L:${gestureMetrics.leftHandVisible ? '✓' : '✗'} R:${gestureMetrics.rightHandVisible ? '✓' : '✗'}`;
@@ -796,6 +1049,32 @@
             document.getElementById('status').innerText = "❌ Camera failed: " + error.message;
             console.error("Camera error:", error);
         });
+        
+        // Keyboard shortcut for testing integrity checker
+        // Press SPACE to simulate speech onset
+        let speechOnsetTriggered = false;
+        
+        document.addEventListener('keydown', (event) => {
+            if (event.code === 'Space' && !speechOnsetTriggered) {
+                speechOnsetTriggered = true;
+                console.log('🎤 Speech onset triggered! Gaze will be recorded.');
+                
+                // Visual feedback
+                document.body.style.backgroundColor = '#2a2a2a';
+                setTimeout(() => {
+                    document.body.style.backgroundColor = '#1a1a1a';
+                }, 200);
+            }
+        });
+        
+        document.addEventListener('keyup', (event) => {
+            if (event.code === 'Space') {
+                speechOnsetTriggered = false;
+            }
+        });
+        
+        console.log('💡 TIP: Press and hold SPACE to simulate speech onset for integrity testing');
+        console.log('💡 Look away from camera and press SPACE repeatedly to test cheating detection');
     </script>
 </body>
 </html>
