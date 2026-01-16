@@ -1,0 +1,114 @@
+@import "tailwindcss";
+
+@theme {
+  --color-porcelain: #F8F9FA;
+  --color-slate-dark: #1E293B;
+  --color-primary-blue: #3B82F6;
+  --color-accent-amber: #F59E0B;
+  --color-accent-red: #EF4444;
+}
+
+@layer base {
+  body {
+    @apply bg-porcelain text-slate-dark antialiased;
+  }
+}
+
+@layer utilities {
+  .status-halo-blue {
+    box-shadow: inset 0 0 0 3px rgba(59, 130, 246, 0.3);
+  }
+  
+  .status-halo-amber {
+    box-shadow: inset 0 0 0 3px rgba(245, 158, 11, 0.5);
+  }
+  
+  .status-halo-red {
+    box-shadow: inset 0 0 0 3px rgba(239, 68, 68, 0.6);
+  }
+}
+
+/* Custom slider styling */
+input[type="range"] {
+  -webkit-appearance: none;
+  appearance: none;
+}
+
+input[type="range"]::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: #3B82F6;
+  cursor: pointer;
+  border: 2px solid white;
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
+}
+
+input[type="range"]::-moz-range-thumb {
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: #3B82F6;
+  cursor: pointer;
+  border: 2px solid white;
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
+}
+
+input[type="range"]:focus {
+  outline: none;
+}
+
+input[type="range"]:focus::-webkit-slider-thumb {
+  box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.3);
+}
+
+input[type="range"]:focus::-moz-range-thumb {
+  box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.3);
+}
+
+/* Print styles for report */
+@media print {
+  @page {
+    margin: 1cm;
+    size: A4;
+  }
+  
+  body {
+    background: white !important;
+  }
+  
+  /* Hide buttons and interactive elements */
+  button,
+  .no-print {
+    display: none !important;
+  }
+  
+  /* Ensure session info is visible and prominent */
+  .print\:block {
+    display: block !important;
+  }
+  
+  /* Page breaks */
+  .print\:break-before {
+    page-break-before: always;
+  }
+  
+  .print\:break-after {
+    page-break-after: always;
+  }
+  
+  /* Avoid breaking inside cards */
+  .print\:break-inside-avoid {
+    page-break-inside: avoid;
+  }
+  
+  /* Make session ID more prominent in print */
+  code {
+    background: #f3f4f6 !important;
+    padding: 0.25rem 0.5rem !important;
+    border-radius: 0.25rem !important;
+    border: 1px solid #d1d5db !important;
+  }
+}
