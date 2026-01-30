@@ -6,7 +6,12 @@ from pydub import AudioSegment
 class AudioEngine:
     def __init__(self):
         self.client = None
+        self.dev_mode = os.getenv("DEV_MODE", "false").lower() == "true"
         
+        if self.dev_mode:
+            print("⚠️ AudioEngine running in DEV MODE - skipping Google Cloud STT connection")
+            return
+
         try:
             # Try to find google_credentials.json in project root
             credentials_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'google_credentials.json')

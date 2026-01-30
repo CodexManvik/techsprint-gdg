@@ -1,0 +1,426 @@
+@import "tailwindcss";
+
+/* =============================================
+   THEME TOKENS - Dark-first gradient design
+   Primary: #3a0ca3 (Deep Purple)
+   Secondary: #050505 (Near Black)
+   ============================================= */
+
+@theme {
+  /* Base colors */
+  --color-background: #050505;
+  --color-background-secondary: #0a0a0f;
+  --color-foreground: #fafafa;
+  --color-foreground-muted: #a1a1aa;
+
+  /* Primary gradient colors */
+  --color-primary: #3a0ca3;
+  --color-primary-light: #4c1d95;
+  --color-primary-dark: #2a0678;
+
+  /* Accent colors */
+  --color-accent-purple: #7c3aed;
+  --color-accent-violet: #8b5cf6;
+  --color-accent-pink: #ec4899;
+  --color-accent-cyan: #06b6d4;
+
+  /* Surface colors for glassmorphism */
+  --color-surface: rgba(255, 255, 255, 0.05);
+  --color-surface-light: rgba(255, 255, 255, 0.1);
+  --color-surface-elevated: rgba(255, 255, 255, 0.08);
+
+  /* Border colors */
+  --color-border: rgba(255, 255, 255, 0.1);
+  --color-border-light: rgba(255, 255, 255, 0.15);
+  --color-border-glow: rgba(58, 12, 163, 0.5);
+
+  /* Status colors */
+  --color-success: #22c55e;
+  --color-warning: #f59e0b;
+  --color-error: #ef4444;
+  --color-info: #3b82f6;
+
+  /* Legacy colors (for backward compatibility) */
+  --color-porcelain: #F8F9FA;
+  --color-slate-dark: #1E293B;
+  --color-primary-blue: #3a0ca3;
+  --color-accent-amber: #F59E0B;
+  --color-accent-red: #EF4444;
+}
+
+/* =============================================
+   BASE STYLES
+   ============================================= */
+
+@layer base {
+  html {
+    color-scheme: dark;
+  }
+
+  body {
+    @apply bg-background text-foreground antialiased;
+    background: linear-gradient(180deg, #050505 0%, #0a0a0f 100%);
+    min-height: 100vh;
+  }
+
+  /* Light mode overrides */
+  html.light {
+    color-scheme: light;
+
+    /* Redefine variables for light mode */
+    --color-background: #F8F9FA;
+    --color-background-secondary: #ffffff;
+    --color-foreground: #1e293b;
+    --color-foreground-muted: #64748b;
+    --color-surface: rgba(255, 255, 255, 0.7);
+    --color-surface-light: rgba(255, 255, 255, 0.9);
+    --color-surface-elevated: rgba(255, 255, 255, 0.8);
+    --color-border: rgba(0, 0, 0, 0.1);
+  }
+
+  html.light body {
+    @apply bg-porcelain text-slate-dark;
+    background: linear-gradient(180deg, #F8F9FA 0%, #e5e7eb 100%);
+  }
+
+  /* Selection styling */
+  ::selection {
+    background: rgba(58, 12, 163, 0.5);
+    color: white;
+  }
+
+  /* Focus ring styling */
+  *:focus-visible {
+    outline: 2px solid rgba(58, 12, 163, 0.8);
+    outline-offset: 2px;
+  }
+}
+
+/* =============================================
+   UTILITY CLASSES
+   ============================================= */
+
+@layer utilities {
+
+  /* Gradient text */
+  .text-gradient {
+    background: linear-gradient(135deg, #7c3aed 0%, #3a0ca3 50%, #ec4899 100%);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+  }
+
+  .text-gradient-primary {
+    background: linear-gradient(135deg, #3a0ca3 0%, #7c3aed 100%);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+  }
+
+  /* Glassmorphism */
+  .glass {
+    background: rgba(255, 255, 255, 0.05);
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+  }
+
+  .glass-dark {
+    background: rgba(0, 0, 0, 0.4);
+    backdrop-filter: blur(16px);
+    -webkit-backdrop-filter: blur(16px);
+    border: 1px solid rgba(255, 255, 255, 0.05);
+  }
+
+  /* Gradient backgrounds */
+  .bg-gradient-primary {
+    background: linear-gradient(135deg, #3a0ca3 0%, #050505 100%);
+  }
+
+  .bg-gradient-accent {
+    background: linear-gradient(135deg, #7c3aed 0%, #3a0ca3 100%);
+  }
+
+  .bg-gradient-glow {
+    background: radial-gradient(ellipse at center, rgba(58, 12, 163, 0.3) 0%, transparent 70%);
+  }
+
+  /* Glow effects */
+  .glow {
+    box-shadow: 0 0 20px rgba(58, 12, 163, 0.4);
+  }
+
+  .glow-lg {
+    box-shadow: 0 0 40px rgba(58, 12, 163, 0.5), 0 0 80px rgba(58, 12, 163, 0.2);
+  }
+
+  .glow-accent {
+    box-shadow: 0 0 20px rgba(124, 58, 237, 0.4);
+  }
+
+  /* Border glow */
+  .border-glow {
+    border: 1px solid rgba(58, 12, 163, 0.5);
+    box-shadow: 0 0 15px rgba(58, 12, 163, 0.3), inset 0 0 15px rgba(58, 12, 163, 0.1);
+  }
+
+  /* Status halos - Updated for dark theme */
+  .status-halo-blue {
+    box-shadow: inset 0 0 0 3px rgba(58, 12, 163, 0.5);
+  }
+
+  .status-halo-amber {
+    box-shadow: inset 0 0 0 3px rgba(245, 158, 11, 0.5);
+  }
+
+  .status-halo-red {
+    box-shadow: inset 0 0 0 3px rgba(239, 68, 68, 0.6);
+  }
+
+  .status-halo-green {
+    box-shadow: inset 0 0 0 3px rgba(34, 197, 94, 0.5);
+  }
+
+  /* Animation utilities */
+  .animate-glow {
+    animation: glow-pulse 2s ease-in-out infinite;
+  }
+
+  .animate-float {
+    animation: float 3s ease-in-out infinite;
+  }
+
+  .animate-shimmer {
+    animation: shimmer 2s linear infinite;
+    background-size: 200% 100%;
+  }
+}
+
+/* =============================================
+   KEYFRAME ANIMATIONS
+   ============================================= */
+
+@keyframes glow-pulse {
+
+  0%,
+  100% {
+    box-shadow: 0 0 20px rgba(58, 12, 163, 0.4);
+  }
+
+  50% {
+    box-shadow: 0 0 40px rgba(58, 12, 163, 0.6), 0 0 60px rgba(124, 58, 237, 0.3);
+  }
+}
+
+@keyframes float {
+
+  0%,
+  100% {
+    transform: translateY(0);
+  }
+
+  50% {
+    transform: translateY(-10px);
+  }
+}
+
+@keyframes shimmer {
+  0% {
+    background-position: -200% 0;
+  }
+
+  100% {
+    background-position: 200% 0;
+  }
+}
+
+@keyframes aurora {
+
+  0%,
+  100% {
+    background-position: 0% 50%;
+  }
+
+  50% {
+    background-position: 100% 50%;
+  }
+}
+
+@keyframes beam {
+  0% {
+    transform: translateY(-100%) rotate(45deg);
+    opacity: 0;
+  }
+
+  50% {
+    opacity: 1;
+  }
+
+  100% {
+    transform: translateY(100%) rotate(45deg);
+    opacity: 0;
+  }
+}
+
+/* =============================================
+   COMPONENT STYLES
+   ============================================= */
+
+/* Custom slider styling */
+input[type="range"] {
+  -webkit-appearance: none;
+  appearance: none;
+  background: transparent;
+}
+
+input[type="range"]::-webkit-slider-track {
+  height: 6px;
+  border-radius: 3px;
+  background: linear-gradient(90deg, #3a0ca3 0%, #7c3aed 100%);
+}
+
+input[type="range"]::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: #ffffff;
+  cursor: pointer;
+  border: 3px solid #3a0ca3;
+  box-shadow: 0 0 10px rgba(58, 12, 163, 0.5);
+  margin-top: -7px;
+}
+
+input[type="range"]::-moz-range-track {
+  height: 6px;
+  border-radius: 3px;
+  background: linear-gradient(90deg, #3a0ca3 0%, #7c3aed 100%);
+}
+
+input[type="range"]::-moz-range-thumb {
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: #ffffff;
+  cursor: pointer;
+  border: 3px solid #3a0ca3;
+  box-shadow: 0 0 10px rgba(58, 12, 163, 0.5);
+}
+
+input[type="range"]:focus {
+  outline: none;
+}
+
+input[type="range"]:focus::-webkit-slider-thumb {
+  box-shadow: 0 0 0 4px rgba(58, 12, 163, 0.3), 0 0 15px rgba(58, 12, 163, 0.5);
+}
+
+input[type="range"]:focus::-moz-range-thumb {
+  box-shadow: 0 0 0 4px rgba(58, 12, 163, 0.3), 0 0 15px rgba(58, 12, 163, 0.5);
+}
+
+/* Scrollbar styling */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: rgba(255, 255, 255, 0.05);
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb {
+  background: rgba(58, 12, 163, 0.5);
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(58, 12, 163, 0.7);
+}
+
+/* =============================================
+   LIGHT MODE OVERRIDES
+   ============================================= */
+
+html.light {
+
+  /* Text gradient for light mode */
+  .text-gradient {
+    background: linear-gradient(135deg, #3a0ca3 0%, #7c3aed 50%, #ec4899 100%);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+  }
+
+  /* Glass for light mode */
+  .glass {
+    background: rgba(255, 255, 255, 0.7);
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
+    border: 1px solid rgba(0, 0, 0, 0.1);
+  }
+
+  /* Scrollbar for light mode */
+  ::-webkit-scrollbar-track {
+    background: rgba(0, 0, 0, 0.05);
+  }
+
+  ::-webkit-scrollbar-thumb {
+    background: rgba(58, 12, 163, 0.4);
+  }
+}
+
+/* =============================================
+   PRINT STYLES
+   ============================================= */
+
+@media print {
+  @page {
+    margin: 1cm;
+    size: A4;
+  }
+
+  body {
+    background: white !important;
+    color: black !important;
+  }
+
+  button,
+  .no-print {
+    display: none !important;
+  }
+
+  .print\:block {
+    display: block !important;
+  }
+
+  .print\:break-before {
+    page-break-before: always;
+  }
+
+  .print\:break-after {
+    page-break-after: always;
+  }
+
+  .print\:break-inside-avoid {
+    page-break-inside: avoid;
+  }
+
+  code {
+    background: #f3f4f6 !important;
+    padding: 0.25rem 0.5rem !important;
+    border-radius: 0.25rem !important;
+    border: 1px solid #d1d5db !important;
+  }
+
+  /* Remove glows and effects for print */
+  .glass,
+  .glow,
+  .glow-lg {
+    background: white !important;
+    box-shadow: none !important;
+    border: 1px solid #d1d5db !important;
+  }
+}

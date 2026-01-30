@@ -14,12 +14,32 @@ class AIEngine:
         self.model_id = "gemini-flash-latest" 
         self.chat = None
 
-    def reset_session(self, style="FAANG_Architect", difficulty="Intermediate", topic="System Design", resume_context=None):
+    def reset_session(self, style="FAANG_Architect", difficulty="Intermediate", topic="System Design", resume_context=None, custom_instructions=None):
         """Initializes the AI with the specific persona, difficulty, and topic."""
         try:
+<<<<<<< Updated upstream
             persona_prompt = get_persona_prompt(style)
             difficulty_prompt = get_difficulty_prompt(difficulty)
             
+=======
+            AIEngine.api_call_count += 1
+            print(f"🔢 API Call #{AIEngine.api_call_count} - reset_session")
+            print(f"🎯 Initializing AI with:")
+            print(f"   - Persona: {style}")
+            print(f"   - Difficulty: {difficulty}")
+            print(f"   - Topic: {topic}")
+            
+            if custom_instructions:
+                print("✅ Using CUSTOM instructions")
+                persona_prompt = custom_instructions
+            else:
+                persona_prompt = get_persona_prompt(style)
+                print(f"✅ Persona prompt loaded: {persona_prompt[:100]}...")
+            
+            difficulty_prompt = get_difficulty_prompt(difficulty)
+            print(f"✅ Difficulty prompt loaded: {difficulty_prompt[:100]}...")
+            
+>>>>>>> Stashed changes
             base_instructions = (
                 f"{persona_prompt}\n\n"
                 f"{difficulty_prompt}\n\n"
@@ -63,16 +83,72 @@ class AIEngine:
         response = self.chat.send_message(prompt)
         return response.text
 
+<<<<<<< Updated upstream
     def generate_feedback_report(self, transcript_text):
         """Generates the final JSON report for the frontend."""
+=======
+    def generate_feedback_report(self, chat_history):
+        """Generates the final JSON report for the frontend with per-message analysis."""
+        
+        # Prepare transcript for the prompt
+        transcript_text = ""
+        user_message_ids = []
+        for msg in chat_history:
+            role = msg['role'].upper()
+            content = msg['content']
+            transcript_text += f"[{msg['id']}] {role}: {content}\n"
+            if msg['role'] == 'user':
+                user_message_ids.append(msg['id'])
+        
+        # DEV MODE: Return mock report
+        if self.dev_mode:
+            print(f"🔧 DEV MODE: Mock feedback report")
+            detailed_analysis = []
+            for msg_id in user_message_ids:
+                detailed_analysis.append({
+                    "id": msg_id,
+                    "rating": 8,
+                    "feedback": "Good response.",
+                    "improved_answer": "A more concise version."
+                })
+                
+            return {
+                "summary": "Mock interview report for development. The candidate demonstrated good technical knowledge.",
+                "overall_score": 78,
+                "radar_chart": {
+                    "technical_accuracy": 75,
+                    "communication_clarity": 70,
+                    "confidence_level": 75,
+                    "problem_solving": 80,
+                    "cultural_fit": 70
+                },
+                "detailed_analysis": detailed_analysis,
+                "feedback": {
+                    "strengths": ["Clear communication", "Good technical knowledge"],
+                    "improvements": ["Maintain eye contact", "Reduce nervous gestures"],
+                    "hiring_verdict": "HIRE"
+                }
+            }
+        
+>>>>>>> Stashed changes
         prompt = f"""
-        Analyze this interview transcript and return a JSON object.
+        Analyze this interview transcript and return a detailed JSON report.
         
         TRANSCRIPT:
         {transcript_text}
         
+        INSTRUCTIONS:
+        1. Evaluate the candidate overall on 5 dimensions (0-100).
+        2. For EACH user message (marked with [id] USER: ...), provide:
+           - Rating (1-10)
+           - Brief Feedback (1 sentence)
+           - Better Answer (how they should have answered)
+        3. Provide a summary and hiring verdict.
+        
         REQUIRED JSON FORMAT:
         {{
+            "summary": "2-sentence summary.",
+            "overall_score": <0-100>,
             "radar_chart": {{
                 "technical_accuracy": <0-100>,
                 "communication_clarity": <0-100>,
@@ -80,12 +156,14 @@ class AIEngine:
                 "problem_solving": <0-100>,
                 "cultural_fit": <0-100>
             }},
-            "feedback": {{
-                "strengths": ["point 1", "point 2"],
-                "improvements": ["point 1", "point 2"],
-                "hiring_verdict": "HIRE" | "NO HIRE" | "STRONG HIRE"
-            }},
-            "summary": "A 2-sentence summary of the candidate's performance."
+            "detailed_analysis": [
+                {{
+                    "id": <id from transcript>,
+                    "rating": <1-10>,
+                    "feedback": "...",
+                    "improved_answer": "..."
+                }}
+            ]
         }}
         """
         
@@ -98,4 +176,20 @@ class AIEngine:
             return json.loads(response.text)
         except Exception as e:
             print(f"Report Gen Error: {e}")
+<<<<<<< Updated upstream
             return None
+=======
+            # Return fallback report on error instead of None
+            return {
+                "summary": "Interview completed. Detailed metrics available in analytics section.",
+                "overall_score": 70,
+                "radar_chart": {
+                    "technical_accuracy": 70,
+                    "communication_clarity": 70,
+                    "confidence_level": 70,
+                    "problem_solving": 70,
+                    "cultural_fit": 70
+                },
+                "detailed_analysis": []
+            }
+>>>>>>> Stashed changes

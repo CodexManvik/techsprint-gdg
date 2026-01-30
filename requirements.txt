@@ -13,3 +13,9 @@ SpeechRecognition
 python-multipart
 websockets
 gtts
+passlib[bcrypt]
+python-jose[cryptography]
+multipart
+google-cloud-speech
+google-cloud-texttospeech
+bcrypt<4.0.0
