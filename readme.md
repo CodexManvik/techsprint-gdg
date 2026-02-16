@@ -31,8 +31,8 @@ GOOGLE_API_KEY=your_actual_api_key_here
 https://www.gyan.dev/ffmpeg/builds/packages/ffmpeg-2026-01-07-git-af6a1dd0b2-essentials_build.7z
 
 # Run Backend using 
-uvicorn app:app --reload
+python -m uvicorn backend.main:app --reload --port 8000
 
 # Run Frontend in a different terminal using 
 cd frontend
-python -m http.server 3000
+npm run dev

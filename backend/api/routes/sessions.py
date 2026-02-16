@@ -13,7 +13,7 @@ from engine.personas import get_persona_list
 from engine.difficulty import get_difficulty_list, get_topics_list
 from engine.session_manager import InterviewSession
 from engine.tts_engine import TTSEngine
-from database import Database
+from backend.db.repository import get_db, DatabaseRepository
 from backend.core.interview.engine import InterviewEngine
 from backend.core.cache import redis_cache
 from pypdf import PdfReader
@@ -23,7 +23,6 @@ import uuid
 router = APIRouter()
 
 # Global instances (TODO: Move to dependency injection)
-db = Database()
 auth_engine = AuthEngine()
 ai = None  # Lazy loaded when needed
 tts = TTSEngine()
@@ -58,7 +57,8 @@ async def get_config_options():
 async def start_interview(
     req: StartSessionRequest,
     current_user: TokenData = Depends(auth_engine.get_current_user),
-    engine: InterviewEngine = Depends(get_interview_engine)
+    engine: InterviewEngine = Depends(get_interview_engine),
+    db: DatabaseRepository = Depends(get_db)
 ):
     """
     Start a new interview session using NEW InterviewEngine.
@@ -80,7 +80,7 @@ async def start_interview(
     )
     
     # DB: Create session
-    db.create_session(session_id, current_user.user_id, req.persona, req.topic, req.difficulty)
+    await db.create_session(session_id, current_user.user_id, req.persona, req.topic, req.difficulty)
     
     # Set TTS persona
     tts.set_persona(req.persona)
@@ -99,44 +99,89 @@ async def start_interview(
 
 
 @router.post("/upload-resume")
-async def upload_resume(file: UploadFile = File(...)):
-    """Extract text from uploaded PDF resume"""
+async def upload_resume(
+    file: UploadFile = File(...),
+    current_user: TokenData = Depends(auth_engine.get_current_user)
+):
+    """Extract text from uploaded PDF resume (requires authentication)"""
+    # Validate file type
+    if file.content_type != "application/pdf":
+        raise HTTPException(status_code=400, detail="Only PDF files are allowed")
+    
     try:
-        content = await file.read()
+        # Read file with size limit (10MB max)
+        MAX_FILE_SIZE = 10 * 1024 * 1024  # 10MB
+        content = await file.read(MAX_FILE_SIZE + 1)
+        
+        if len(content) > MAX_FILE_SIZE:
+            raise HTTPException(status_code=413, detail="File too large. Maximum size is 10MB")
+        
+        # Parse PDF safely
         reader = PdfReader(io.BytesIO(content))
-        text = "\n".join([page.extract_text() for page in reader.pages])
+        
+        # Extract text from all pages, coalescing None to empty string
+        text_parts = []
+        for page in reader.pages:
+            page_text = page.extract_text()
+            if page_text:
+                text_parts.append(page_text)
+        
+        text = "\n".join(text_parts)
+        
+        if not text.strip():
+            raise HTTPException(status_code=400, detail="PDF contains no extractable text")
+        
         return {"status": "success", "text": text[:5000]}  # Limit text size
+        
+    except HTTPException:
+        # Re-raise HTTP exceptions
+        raise
     except Exception as e:
-        return {"status": "error", "message": str(e)}
+        # Handle PDF parsing errors or other unexpected errors
+        raise HTTPException(status_code=500, detail=f"PDF processing error: {str(e)}")
 
 
 @router.get("/history")
-async def get_history(current_user: TokenData = Depends(auth_engine.get_current_user)):
+async def get_history(
+    current_user: TokenData = Depends(auth_engine.get_current_user),
+    db: DatabaseRepository = Depends(get_db)
+):
     """Get user's interview session history"""
-    return db.get_user_sessions(current_user.user_id)
+    return await db.get_user_sessions(current_user.user_id)
 
 
-@router.post("/check_session/{session_id}")
-async def check_session(session_id: str):
-    """Verifies if a session ID is valid and active"""
+@router.get("/check_session/{session_id}")
+async def check_session(
+    session_id: str,
+    current_user: TokenData = Depends(auth_engine.get_current_user),
+    db: DatabaseRepository = Depends(get_db)
+):
+    """Verifies if a session ID is valid and active (requires authentication)"""
     # Check in-memory
     if session_id in sessions:
+        session_obj = sessions[session_id]
+        # Verify ownership (if session has user tracking)
+        # For now, return basic details
         return {
             "valid": True,
             "details": {
-                "topic": sessions[session_id].topic,
-                "persona": sessions[session_id].company_focus
+                "topic": session_obj.topic,
+                "persona": session_obj.company_focus
             }
         }
     
     # Check Redis
     cached = await redis_cache.get_session(session_id)
     if cached:
-        return {"valid": True, "details": cached}
+        return {"valid": True, "details": {"topic": cached.get("topic"), "persona": cached.get("persona")}}
     
-    # Check DB
-    session = db.get_session(session_id)
+    # Check DB with ownership verification
+    session = await db.get_session(session_id)
     if session:
+        # Verify ownership
+        if session.get('user_id') != current_user.user_id:
+            raise HTTPException(status_code=403, detail="Access denied: You do not own this session")
+        
         return {
             "valid": True,
             "details": {
@@ -151,18 +196,30 @@ async def check_session(session_id: str):
 @router.get("/session/{session_id}/messages")
 async def get_session_messages(
     session_id: str,
-    current_user: TokenData = Depends(auth_engine.get_current_user)
+    current_user: TokenData = Depends(auth_engine.get_current_user),
+    db: DatabaseRepository = Depends(get_db)
 ):
-    """Retrieve chat history for a session"""
-    # TODO: Verify session belongs to user
-    messages = db.get_messages(session_id)
+    """Retrieve chat history for a session (with ownership verification)"""
+    # Verify session belongs to user
+    session = await db.get_session(session_id)
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found")
+    
+    if session.get('user_id') != current_user.user_id:
+        raise HTTPException(status_code=403, detail="Access denied: You do not own this session")
+    
+    messages = await db.get_messages(session_id)
     return messages
 
 
 @router.get("/report")
-async def get_report(session_id: Optional[str] = None):
+async def get_report(
+    session_id: Optional[str] = None,
+    current_user: TokenData = Depends(auth_engine.get_current_user),
+    db: DatabaseRepository = Depends(get_db)
+):
     """
-    Generate interview report with AI feedback.
+    Generate interview report with AI feedback (requires authentication and ownership).
     
     TODO: Migrate to use async database calls
     """
@@ -190,18 +247,27 @@ async def get_report(session_id: Optional[str] = None):
             "totalDuration": 0
         }
     
-    # Fetch session analytics
+    # Verify ownership and fetch session analytics
+    db_session = await db.get_session(session_id)
+    if not db_session:
+        raise HTTPException(status_code=404, detail="Session not found")
+    
+    # Ownership check
+    if db_session.get('user_id') != current_user.user_id:
+        raise HTTPException(status_code=403, detail="Access denied: You do not own this session")
+    
+    # Get analytics from memory or DB
     session = sessions.get(session_id)
     analytics = session.get_analytics() if session else {}
     
-    if not analytics and session_id:
-        # Try DB
-        db_session = db.get_session(session_id)
-        if db_session and db_session['analytics']:
+    if not analytics and db_session.get('analytics'):
+        try:
             analytics = json.loads(db_session['analytics'])
+        except (json.JSONDecodeError, TypeError):
+            analytics = {}
     
     # Fetch chat history
-    chat_history = db.get_messages(session_id)
+    chat_history = await db.get_messages(session_id)
     
     # Generate AI feedback (skip if AI engine not available)
     ai_report = None
@@ -224,7 +290,7 @@ async def get_report(session_id: Optional[str] = None):
         }
     
     # Update DB
-    db.update_session_analytics(
+    await db.update_session_analytics(
         session_id,
         analytics,
         ai_report.get("summary", ""),
@@ -234,7 +300,7 @@ async def get_report(session_id: Optional[str] = None):
     # Update individual message ratings (only if AI provided analysis)
     for msg_analysis in ai_report.get("detailed_analysis", []):
         if "id" in msg_analysis:
-            db.update_message_analysis(
+            await db.update_message_analysis(
                 msg_analysis["id"],
                 msg_analysis.get("rating"),
                 msg_analysis.get("feedback"),
@@ -242,7 +308,7 @@ async def get_report(session_id: Optional[str] = None):
             )
     
     # Re-fetch updated chat history
-    updated_chat_history = db.get_messages(session_id)
+    updated_chat_history = await db.get_messages(session_id)
     
     # Format for frontend
     report_data = {

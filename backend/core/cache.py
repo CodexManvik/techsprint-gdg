@@ -31,7 +31,19 @@ class RedisCache:
             )
             # Test connection
             await self.redis.ping()
-            print(f"✅ Redis connected: {settings.REDIS_URL}")
+            
+            # Mask credentials for logging
+            from urllib.parse import urlparse, urlunparse
+            parsed = urlparse(settings.REDIS_URL)
+            if parsed.password:
+                # Replace password with asterisks
+                masked_netloc = f"{parsed.username}:***@{parsed.hostname}:{parsed.port}"
+                masked = parsed._replace(netloc=masked_netloc)
+                masked_url = urlunparse(masked)
+            else:
+                masked_url = settings.REDIS_URL
+            
+            print(f"✅ Redis connected: {masked_url}")
         except Exception as e:
             print(f"⚠️ Redis connection failed: {e}")
             print("   Falling back to database-only session storage")

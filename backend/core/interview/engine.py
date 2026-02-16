@@ -3,11 +3,16 @@ Interview Engine - Orchestrates LLM-powered Interview Sessions
 
 Handles session initialization, real-time feedback injection, and report generation.
 """
+import re
+import asyncio
 from typing import Optional
 from backend.core.llm.base import LLMClient
 from backend.core.llm.ollama import OllamaClient
 from backend.core.llm.circuit_breaker import CircuitBreaker
 from backend.config.settings import settings
+import logging
+
+logger = logging.getLogger(__name__)
 
 
 class InterviewEngine:
@@ -23,6 +28,7 @@ class InterviewEngine:
         
         # Session context storage (message history per session)
         self.sessions: dict[str, list[dict]] = {}
+        self.sessions_lock = asyncio.Lock()  # Protect concurrent access
     
     def _create_llm_client(self) -> LLMClient:
         """Factory method for LLM client creation"""
@@ -32,6 +38,26 @@ class InterviewEngine:
             # Fallback to Gemini (existing implementation)
             from engine.ai_engine import AIEngine
             return AIEngine()  # TODO: Wrap in adapter
+    
+    
+    def _sanitize_prompt(self, text: str) -> str:
+        """Remove potential prompt injection patterns"""
+        if not text:
+            return ""
+        
+        # Remove common injection patterns
+        dangerous_patterns = [
+            r"ignore (previous|all) (instructions|prompts)",
+            r"system:\s*",
+            r"<\|.*?\|>",  # Special tokens
+            r"\[INST\].*?\[\/INST\]",  # Instruction markers
+        ]
+        
+        sanitized = text
+        for pattern in dangerous_patterns:
+            sanitized = re.sub(pattern, "", sanitized, flags=re.IGNORECASE)
+        
+        return sanitized.strip()
     
     async def start_session(
         self,
@@ -48,15 +74,27 @@ class InterviewEngine:
         Returns:
             Opening question from the AI
         """
-        # Build system prompt
-        system_prompt = self._build_system_prompt(
-            persona, difficulty, topic, resume_context, custom_instructions
-        )
-        
-        # Initialize message history
-        self.sessions[session_id] = [
-            {"role": "system", "content": system_prompt}
-        ]
+        # Session overwrite check (with lock)
+        async with self.sessions_lock:
+            if session_id in self.sessions:
+                logger.warning(f"Session {session_id} already exists. Overwriting.")
+            
+            # Sanitize custom_instructions for prompt injection
+            safe_instructions = ""
+            if custom_instructions:
+                safe_instructions = self._sanitize_prompt(custom_instructions)
+                if safe_instructions != custom_instructions:
+                    logger.warning(f"Sanitized custom instructions for session {session_id}")
+            
+            # Build system prompt
+            system_prompt = self._build_system_prompt(
+                persona, difficulty, topic, resume_context, safe_instructions
+            )
+            
+            # Initialize message history
+            self.sessions[session_id] = [
+                {"role": "system", "content": system_prompt}
+            ]
         
         # Get opening question  
         opening_msg = [
@@ -70,8 +108,9 @@ class InterviewEngine:
             stream=False
         )
         
-        # Add to history
-        self.sessions[session_id].append({"role": "assistant", "content": response})
+        # Add to history (with lock)
+        async with self.sessions_lock:
+            self.sessions[session_id].append({"role": "assistant", "content": response})
         
         return response
     
@@ -92,24 +131,29 @@ class InterviewEngine:
         Returns:
             AI's response
         """
-        if session_id not in self.sessions:
-            return "❌ Session not found. Please start a new interview."
-        
-        # Inject behavioral feedback if metrics indicate issues
-        enhanced_input = self._inject_feedback(user_input, metrics)
-        
-        # Add user message to history
-        self.sessions[session_id].append({"role": "user", "content": enhanced_input})
+        async with self.sessions_lock:
+            if session_id not in self.sessions:
+                return "❌ Session not found. Please start a new interview."
+            
+            # Inject behavioral feedback if metrics indicate issues
+            enhanced_input = self._inject_feedback(user_input, metrics)
+            
+            # Add user message to history
+            self.sessions[session_id].append({"role": "user", "content": enhanced_input})
+            
+            # Copy history for processing
+            messages = self.sessions[session_id].copy()
         
         # Get AI response with circuit breaker protection
         response = await self.circuit_breaker.call(
             self.llm.chat,
-            self.sessions[session_id],
+            messages,
             stream=False
         )
         
-        # Add AI response to history
-        self.sessions[session_id].append({"role": "assistant", "content": response})
+        # Add AI response to history (with lock)
+        async with self.sessions_lock:
+            self.sessions[session_id].append({"role": "assistant", "content": response})
         
         return response
     

@@ -197,7 +197,7 @@ async def upload_resume(file: UploadFile = File(...)):
         return {"status": "error", "message": str(e)}
 
 @app.get("/api/report")
-async def get_report(session_id: str = None):
+async def get_report(session_id: str = None, current_user: TokenData = Depends(auth_engine.get_current_user)):
     print(f"📋 Report requested for session: {session_id}")
     
     # If no session_id provided, return mock data for testing
@@ -229,8 +229,16 @@ async def get_report(session_id: str = None):
     if not analytics and session_id:
         # Try to load from DB if memory session is gone (reloaded server)
         db_session = db.get_session(session_id)
-        if db_session and db_session['analytics']:
-             analytics = json.loads(db_session['analytics'])
+        
+        # Verify ownership
+        if db_session:
+            if db_session.get('user_id') != current_user.user_id:
+                raise HTTPException(status_code=403, detail="Access denied: You do not own this session")
+            
+            if db_session.get('analytics'):
+                analytics = json.loads(db_session['analytics'])
+        else:
+            raise HTTPException(status_code=404, detail="Session not found")
 
     # Fetch Chat History from DB
     chat_history = db.get_messages(session_id)

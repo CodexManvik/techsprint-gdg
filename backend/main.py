@@ -12,6 +12,7 @@ from backend.config.settings import settings
 from backend.core.cache import redis_cache
 from backend.core.llm.ollama import OllamaClient  
 from backend.core.interview.engine import InterviewEngine
+from backend.db.repository import init_db, close_db
 
 # Global instances (initialized in lifespan)
 interview_engine: InterviewEngine = None
@@ -24,6 +25,7 @@ async def lifespan(app: FastAPI):
     Application lifespan manager.
     
     Handles startup/shutdown tasks:
+    - Initialize async database connection
     - Initialize Redis connection
     - Initialize LLM client
     - Create InterviewEngine instance
@@ -32,21 +34,24 @@ async def lifespan(app: FastAPI):
     # === STARTUP ===
     print("🚀 Starting Interview Mirror Backend...")
     
-    # 1. Connect to Redis
+    # 1. Initialize async database
+    await init_db()
+    
+    # 2. Connect to Redis
     await redis_cache.connect()
     
-    # 2. Initialize LLM client
+    # 3. Initialize LLM client
     global llm_client, interview_engine
     llm_client = OllamaClient()
     
-    # 3. Health check LLM
+    # 4. Health check LLM
     llm_healthy = await llm_client.health_check()
     if llm_healthy:
         print(f"✅ LLM Connected: {settings.OLLAMA_MODEL} @ {settings.OLLAMA_BASE_URL}")
     else:
         print(f"⚠️ LLM Connection Failed - Circuit breaker will handle fallback")
     
-    # 4. Create interview engine
+    # 5. Create interview engine
     interview_engine = InterviewEngine()
     print("✅ Interview Engine initialized")
     
@@ -58,6 +63,7 @@ async def lifespan(app: FastAPI):
     print("\n🔄 Shutting down...")
     
     # Cleanup connections
+    await close_db()
     await llm_client.close()
     await redis_cache.close()
     await interview_engine.close()
@@ -75,10 +81,16 @@ def create_app() -> FastAPI:
         lifespan=lifespan
     )
     
-    # CORS Middleware
+    # CORS Middleware - Restrict origins (no wildcard in production)
+    cors_origins = [origin.strip() for origin in settings.CORS_ORIGINS.split(",")]
+    
+    # Prevent wildcard in production
+    if settings.ENV == "production" and "*" in cors_origins:
+        raise ValueError("CORS wildcard '*' is not allowed in production. Set CORS_ORIGINS in .env")
+    
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=["*"],  # TODO: Restrict in production
+        allow_origins=cors_origins,
         allow_credentials=True,
         allow_methods=["*"],
         allow_headers=["*"],
@@ -110,4 +122,8 @@ app = create_app()
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8000, reload=settings.DEBUG)
+    # Use import string for reload support
+    if settings.DEBUG:
+        uvicorn.run("backend.main:app", host="0.0.0.0", port=8000, reload=True)
+    else:
+        uvicorn.run(app, host="0.0.0.0", port=8000, reload=False)

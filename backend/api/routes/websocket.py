@@ -5,11 +5,14 @@ Handles video tracking, audio processing, and LLM conversation flow.
 """
 import json
 import base64
+import asyncio
+import time
+import logging
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect, Depends
 from backend.core.interview.engine import InterviewEngine
 from backend.core.interview.analyzer import CheatingDetector
 from backend.core.cache import redis_cache
-from database import Database
+from backend.db.repository import get_db, DatabaseRepository
 
 # Legacy imports (to be migrated)
 from engine.vision_engine import VisionEngine
@@ -18,13 +21,14 @@ from engine.tts_engine import TTSEngine
 from engine.session_manager import InterviewSession
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
 
 # Global instances (TODO: Move to dependency injection)
-db = Database()
 vision = VisionEngine()
 audio_processor = AudioEngine()
 tts = TTSEngine()
 sessions = {}  # In-memory fallback (Redis preferred)
+sessions_lock = asyncio.Lock()  # Protect concurrent access to sessions dict
 
 
 async def get_interview_engine() -> InterviewEngine:
@@ -50,49 +54,80 @@ async def interview_websocket(
     """
     await websocket.accept()
     
+    # Track connection start time for accurate elapsed calculation
+    connection_start_time = time.time()
+    
     # Initialize cheating detector
     cheating_detector = CheatingDetector()
     
-    # 1. Session Reconnect Logic
-    if session_id not in sessions:
-        # Try to restore from Redis
-        cached_session = await redis_cache.get_session(session_id)
-        
-        if cached_session:
-            print(f"🔄 Restored session from Redis: {session_id}")
-        else:
-            # Try DB
-            db_session = db.get_session(session_id)
-            if db_session:
+    # Initialize database dependency
+    # Note: WebSocket cannot use Depends(get_db), so we get it manually
+    from backend.db.repository import db_repository
+    db = db_repository
+    
+    # 1. Session Reconnect Logic (with lock protection)
+    async with sessions_lock:
+        if session_id not in sessions:
+            # Try to restore from Redis
+            cached_session = await redis_cache.get_session(session_id)
+            
+            if cached_session:
+                # Deserialize cached session into in-memory object
                 sessions[session_id] = InterviewSession(
                     session_id,
-                    company_focus=db_session.get('persona', 'General'),
-                    difficulty=db_session.get('difficulty', 'Medium'),
-                    topic=db_session.get('topic', 'General')
+                    company_focus=cached_session.get('persona', 'General'),
+                    difficulty=cached_session.get('difficulty', 'Medium'),
+                    topic=cached_session.get('topic', 'General')
                 )
-                print(f"🔄 Restored session from DB: {session_id}")
+                logger.info(f"Restored session from Redis: {session_id}")
             else:
-                # New session (waiting for initialization)
-                sessions[session_id] = InterviewSession(session_id)
-                print(f"📝 Created new session: {session_id}")
-    else:
-        print(f"🔄 Reconnecting to existing session: {session_id}")
+                # Try DB
+                db_session = await db.get_session(session_id) if db else None
+                if db_session:
+                    sessions[session_id] = InterviewSession(
+                        session_id,
+                        company_focus=db_session.get('persona', 'General'),
+                        difficulty=db_session.get('difficulty', 'Medium'),
+                        topic=db_session.get('topic', 'General')
+                    )
+                    logger.info(f"Restored session from DB: {session_id}")
+                else:
+                    # New session (waiting for initialization)
+                    sessions[session_id] = InterviewSession(session_id)
+                    logger.info(f"Created new session: {session_id}")
+        else:
+            logger.info(f"Reconnecting to existing session: {session_id}")
     
     current_session = sessions[session_id]
     
     try:
         while True:
             data = await websocket.receive_text()
-            payload = json.loads(data)
+            
+            # Parse JSON with error handling
+            try:
+                payload = json.loads(data)
+            except json.JSONDecodeError as e:
+                logger.error(f"JSON parse error: {e}")
+                await websocket.send_text(json.dumps({
+                    "type": "error",
+                    "message": "Invalid JSON format"
+                }))
+                continue
             
             # --- VISION TRACKING ---
             if payload.get("type") == "tracking":
+                # Validate landmarks key exists
+                if 'landmarks' not in payload or not payload.get('landmarks'):
+                    logger.warning("Missing landmarks in tracking payload")
+                    continue
+                
                 try:
                     metrics = vision.analyze_frame(payload['landmarks'])
                     current_session.log_vision_metrics(metrics)
                     
-                    # Check for cheating violations
-                    elapsed = 5.0  # TODO: Track actual elapsed time
+                    # Check for cheating violations with actual elapsed time
+                    elapsed = time.time() - connection_start_time
                     violation = cheating_detector.check_violations(metrics, elapsed)
                     
                     response = {
@@ -111,7 +146,15 @@ async def interview_websocket(
             
             # --- AUDIO CONVERSATION ---
             elif payload.get("type") == "conversation":
-                print("🎤 Processing audio...")
+                logger.info("Processing audio...")
+                
+                # Validate audio_data key exists
+                if 'audio_data' not in payload or not payload.get('audio_data'):
+                    await websocket.send_text(json.dumps({
+                        "type": "error",
+                        "message": "Missing audio data"
+                    }))
+                    continue
                 
                 try:
                     # 1. Process Audio → Text
@@ -120,7 +163,7 @@ async def interview_websocket(
                     user_text = analysis['text']
                     
                     if analysis.get('error'):
-                        print(f"Audio Error: {analysis['error']}")
+                        logger.error(f"Audio error: {analysis['error']}")
                     
                     if not user_text:
                         await websocket.send_text(json.dumps({
@@ -129,7 +172,8 @@ async def interview_websocket(
                         }))
                         continue
                     
-                    print(f"🗣️ User: {user_text}")
+                    # Redact PII from logs - log only metadata
+                    logger.info(f"User message length: {len(user_text)} chars")
                     
                     # 2. Get current vision metrics for context
                     current_metrics = None
@@ -143,23 +187,24 @@ async def interview_websocket(
                         metrics=current_metrics
                     )
                     
-                    print(f"🤖 AI: {ai_reply}")
+                    # Redact PII from logs - log only length
+                    logger.info(f"AI reply length: {len(ai_reply)} chars")
                     
                     # 4. Log interaction
                     current_session.log_interaction(user_text, ai_reply)
                     
-                    # 5. Save to DB
-                    db.add_message(session_id, "user", user_text)
-                    db.add_message(session_id, "ai", ai_reply)
+                    # 5. Save to DB asynchronously (non-blocking)
+                    await asyncio.to_thread(db.add_message, session_id, "user", user_text)
+                    await asyncio.to_thread(db.add_message, session_id, "ai", ai_reply)
                     
                     # 6. Generate TTS audio
-                    print("🔊 Generating TTS audio...")
+                    logger.info("Generating TTS audio...")
                     audio_b64 = tts.generate_audio(ai_reply)
                     
                     if audio_b64:
-                        print(f"✅ Audio generated: {len(audio_b64)} chars (base64)")
+                        logger.info(f"Audio generated: {len(audio_b64)} chars (base64)")
                     else:
-                        print("⚠️ Audio generation returned None")
+                        logger.warning("Audio generation returned None")
                     
                     # 7. Send response
                     await websocket.send_text(json.dumps({
@@ -169,7 +214,7 @@ async def interview_websocket(
                         "audio": audio_b64
                     }))
                     
-                    print("📤 Response sent to frontend")
+                    logger.info("Response sent to frontend")
                     
                     # 8. Update Redis cache
                     session_state = {
@@ -180,13 +225,34 @@ async def interview_websocket(
                     await redis_cache.set_session(session_id, session_state)
                 
                 except Exception as e:
-                    print(f"Processing Error: {e}")
+                    logger.error(f"Processing error: {e}")
                     await websocket.send_text(json.dumps({
                         "type": "error",
                         "message": "System error processing audio."
                     }))
     
     except WebSocketDisconnect:
-        print(f"Session {session_id} disconnected")
+        logger.info(f"WebSocket disconnected for session {session_id}")
+        
+        # Session cleanup on disconnect
+        async with sessions_lock:
+            # Remove from in-memory sessions
+            if session_id in sessions:
+                del sessions[session_id]
+                logger.info(f"Cleaned up in-memory session: {session_id}")
+            
+            # Clear Redis cache (optional: keep for session persistence)
+            # Uncomment if you want to clear Redis on disconnect:
+            # await redis_cache.delete_session(session_id)
+            # logger.info(f"Cleared Redis cache for session: {session_id}")
+        
+        logger.info(f"Session {session_id} cleanup complete")
+        
     except Exception as e:
-        print(f"CRITICAL Error: {e}")
+        logger.error(f"CRITICAL Error in session {session_id}: {e}")
+        
+        # Cleanup on error as well
+        async with sessions_lock:
+            if session_id in sessions:
+                del sessions[session_id]
+                logger.info(f"Cleaned up session after error: {session_id}")

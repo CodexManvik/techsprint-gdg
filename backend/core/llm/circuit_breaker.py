@@ -4,8 +4,12 @@ Circuit Breaker Pattern for LLM Fault Tolerance
 Prevents cascading failures when LLM service is down.
 """
 import time
+import asyncio
+import logging
 from enum import Enum
 from typing import Callable, Any
+
+logger = logging.getLogger(__name__)
 
 
 class CircuitState(Enum):
@@ -32,9 +36,11 @@ class CircuitBreaker:
         self.recovery_timeout = recovery_timeout
         self.fallback_message = fallback_message
         
+        # Protected state (requires lock for concurrent access)
         self.state = CircuitState.CLOSED
         self.failure_count = 0
         self.last_failure_time = 0.0
+        self.state_lock = asyncio.Lock()  # Protect concurrent state access
     
     async def call(self, func: Callable, *args, **kwargs) -> Any:
         """
@@ -47,37 +53,42 @@ class CircuitBreaker:
         Returns:
             Function result OR fallback message if circuit is open
         """
-        # Check if circuit should transition from OPEN -> HALF_OPEN
-        if self.state == CircuitState.OPEN:
-            if time.time() - self.last_failure_time >= self.recovery_timeout:
-                print(f"🔄 Circuit breaker transitioning to HALF_OPEN (testing recovery)")
-                self.state = CircuitState.HALF_OPEN
-            else:
-                # Circuit still open, return fallback
-                print(f"⚠️ Circuit breaker OPEN - rejecting LLM call")
-                return self.fallback_message
+        # Check if circuit should transition from OPEN -> HALF_OPEN (with lock)
+        async with self.state_lock:
+            if self.state == CircuitState.OPEN:
+                if time.time() - self.last_failure_time >= self.recovery_timeout:
+                    logger.info("Circuit breaker transitioning to HALF_OPEN (testing recovery)")
+                    self.state = CircuitState.HALF_OPEN
+                else:
+                    # Circuit still open, return fallback
+                    logger.warning("Circuit breaker OPEN - rejecting LLM call")
+                    return self.fallback_message
         
         # Attempt the call
         try:
             result = await func(*args, **kwargs)
             
-            # Success! Reset circuit
-            if self.state == CircuitState.HALF_OPEN:
-                print(f"✅ Circuit breaker recovered - transitioning to CLOSED")
-            self.state = CircuitState.CLOSED
-            self.failure_count = 0
+            # Success! Reset circuit (with lock)
+            async with self.state_lock:
+                if self.state == CircuitState.HALF_OPEN:
+                    logger.info("Circuit breaker recovered - transitioning to CLOSED")
+                self.state = CircuitState.CLOSED
+                self.failure_count = 0
             
             return result
             
         except Exception as e:
-            print(f"❌ Circuit breaker caught error: {str(e)}")
-            self.failure_count += 1
-            self.last_failure_time = time.time()
+            logger.error(f"Circuit breaker caught error: {str(e)}")
             
-            # Should we open the circuit?
-            if self.failure_count >= self.failure_threshold:
-                print(f"🚨 Circuit breaker OPENING after {self.failure_count} failures")
-                self.state = CircuitState.OPEN
+            # Update failure state (with lock)
+            async with self.state_lock:
+                self.failure_count += 1
+                self.last_failure_time = time.time()
+                
+                # Should we open the circuit?
+                if self.failure_count >= self.failure_threshold:
+                    logger.warning(f"Circuit breaker OPENING after {self.failure_count} failures")
+                    self.state = CircuitState.OPEN
             
             # Return fallback for now
             return self.fallback_message
