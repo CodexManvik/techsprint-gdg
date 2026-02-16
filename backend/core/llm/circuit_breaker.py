@@ -70,10 +70,18 @@ class CircuitBreaker:
             
             # Success! Reset circuit (with lock)
             async with self.state_lock:
+                # Only transition to CLOSED if we're in HALF_OPEN
+                # Avoid closing a circuit that was just opened by a concurrent failure
                 if self.state == CircuitState.HALF_OPEN:
                     logger.info("Circuit breaker recovered - transitioning to CLOSED")
-                self.state = CircuitState.CLOSED
-                self.failure_count = 0
+                    self.state = CircuitState.CLOSED
+                    self.failure_count = 0
+                elif self.state == CircuitState.CLOSED:
+                    # Already closed, just reset count
+                    self.failure_count = 0
+                else:
+                    # Circuit was opened by concurrent failure, skip closing
+                    logger.debug(f"Circuit state is {self.state}, skipping transition to CLOSED")
             
             return result
             

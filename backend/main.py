@@ -82,7 +82,11 @@ def create_app() -> FastAPI:
     )
     
     # CORS Middleware - Restrict origins (no wildcard in production)
-    cors_origins = [origin.strip() for origin in settings.CORS_ORIGINS.split(",")]
+    cors_origins = [
+        origin.strip() 
+        for origin in settings.CORS_ORIGINS.split(",")
+        if origin.strip()  # Filter out empty strings
+    ]
     
     # Prevent wildcard in production
     if settings.ENV == "production" and "*" in cors_origins:

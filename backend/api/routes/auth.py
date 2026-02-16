@@ -68,8 +68,9 @@ async def register(user: UserRegister, db: DatabaseRepository = Depends(get_db))
         # Database constraint violation (duplicate email)
         raise HTTPException(status_code=409, detail="Email already registered")
     except Exception as e:
-        # Other unexpected database errors
-        raise HTTPException(status_code=500, detail=f"Database error: {str(e)}")
+        # Other unexpected database errors - log but don't expose details
+        logger.exception("Database error during user registration")
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 
 @router.post("/login", response_model=Token)

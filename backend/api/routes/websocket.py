@@ -97,8 +97,10 @@ async def interview_websocket(
                     logger.info(f"Created new session: {session_id}")
         else:
             logger.info(f"Reconnecting to existing session: {session_id}")
-    
-    current_session = sessions[session_id]
+        
+        # Assign current_session inside lock to prevent KeyError
+        current_session = sessions[session_id]
+
     
     try:
         while True:

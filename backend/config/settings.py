@@ -58,11 +58,16 @@ class Settings(BaseSettings):
                 self.JWT_SECRET = secrets.token_urlsafe(32)
                 logger.warning(f"Auto-generated JWT_SECRET for {self.ENV} environment")
         
-        # DEBUG follows ENV
-        if self.ENV == "development":
-            self.DEBUG = True
-        else:
-            self.DEBUG = False
+        # DEBUG follows ENV only if not explicitly set by user
+        # Check if DEBUG was set from environment variable
+        import os
+        if 'DEBUG' not in os.environ:
+            # User didn't set DEBUG, derive from ENV
+            if self.ENV == "development":
+                self.DEBUG = True
+            else:
+                self.DEBUG = False
+        # else: preserve user's explicit DEBUG setting
         
         return self
     

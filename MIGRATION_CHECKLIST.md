@@ -31,7 +31,7 @@
 ### ✅ Database Migration (NEW)
 - ✅ **Async Database** (`backend/db/repository.py`)
   - Converted from synchronous `sqlite3` to async `aiosqlite`
-  - Added connection pooling with WAL mode
+  - Single async connection with WAL mode for concurrency
   - Implemented proper indexing for performance
   - All routes updated to use async database calls
 

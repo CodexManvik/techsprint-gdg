@@ -159,20 +159,26 @@ async def check_session(
     """Verifies if a session ID is valid and active (requires authentication)"""
     # Check in-memory
     if session_id in sessions:
-        session_obj = sessions[session_id]
-        # Verify ownership (if session has user tracking)
-        # For now, return basic details
-        return {
-            "valid": True,
-            "details": {
-                "topic": session_obj.topic,
-                "persona": session_obj.company_focus
+        # Must verify ownership via database - in-memory session doesn't track user_id
+        db_session = await db.get_session(session_id)
+        if db_session and db_session.get('user_id') == current_user.user_id:
+            session_obj = sessions[session_id]
+            return {
+                "valid": True,
+                "details": {
+                    "topic": session_obj.topic,
+                    "persona": session_obj.company_focus
+                }
             }
-        }
+        else:
+            raise HTTPException(status_code=403, detail="Access denied: You do not own this session")
     
     # Check Redis
     cached = await redis_cache.get_session(session_id)
     if cached:
+        # Verify ownership from cached data
+        if cached.get('user_id') != current_user.user_id:
+            raise HTTPException(status_code=403, detail="Access denied: You do not own this session")
         return {"valid": True, "details": {"topic": cached.get("topic"), "persona": cached.get("persona")}}
     
     # Check DB with ownership verification

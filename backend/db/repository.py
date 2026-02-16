@@ -42,10 +42,7 @@ class DatabaseRepository:
         db_file.parent.mkdir(parents=True, exist_ok=True)
         
         # Connect with WAL mode for better concurrency
-        self._connection = await aiosqlite.connect(
-            self.db_path,
-            isolation_level=None  # Autocommit mode
-        )
+        self._connection = await aiosqlite.connect(self.db_path)
         
         # Enable Write-Ahead Logging for concurrent reads/writes
         await self._connection.execute("PRAGMA journal_mode=WAL")
@@ -202,7 +199,7 @@ class DatabaseRepository:
         persona: str,
         topic: str,
         difficulty: str
-    ) -> None:
+    ) -> bool:
         """
         Create a new interview session.
         
@@ -212,6 +209,9 @@ class DatabaseRepository:
             persona: Interview persona
             topic: Interview topic
             difficulty: Difficulty level
+            
+        Returns:
+            True if session created, False if session already exists
         """
         try:
             await self._connection.execute(
@@ -223,8 +223,10 @@ class DatabaseRepository:
             )
             await self._connection.commit()
             logger.info(f"📝 Created session {session_id} for user {user_id}")
+            return True
         except aiosqlite.IntegrityError:
             logger.warning(f"⚠️ Session already exists: {session_id}")
+            return False
     
     async def get_session(self, session_id: str) -> Optional[Dict[str, Any]]:
         """
@@ -396,6 +398,11 @@ async def init_db(db_path: str = None) -> DatabaseRepository:
         Initialized database repository
     """
     global db_repository
+    
+    # Close existing connection if it exists
+    if db_repository is not None:
+        await db_repository.close()
+    
     db_repository = DatabaseRepository(db_path)
     await db_repository.connect()
     return db_repository

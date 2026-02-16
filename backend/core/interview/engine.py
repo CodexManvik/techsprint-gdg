@@ -15,6 +15,11 @@ import logging
 logger = logging.getLogger(__name__)
 
 
+class SessionNotFoundError(Exception):
+    """Raised when a session is not found in the engine"""
+    pass
+
+
 class InterviewEngine:
     """Main interview orchestration service"""
     
@@ -130,10 +135,13 @@ class InterviewEngine:
             
         Returns:
             AI's response
+            
+        Raises:
+            SessionNotFoundError: If session_id doesn't exist
         """
         async with self.sessions_lock:
             if session_id not in self.sessions:
-                return "❌ Session not found. Please start a new interview."
+                raise SessionNotFoundError(f"Session {session_id} not found")
             
             # Inject behavioral feedback if metrics indicate issues
             enhanced_input = self._inject_feedback(user_input, metrics)
@@ -151,8 +159,10 @@ class InterviewEngine:
             stream=False
         )
         
-        # Add AI response to history (with lock)
+        # Add AI response to history (with lock and defensive check)
         async with self.sessions_lock:
+            if session_id not in self.sessions:
+                raise SessionNotFoundError(f"Session {session_id} was removed during processing")
             self.sessions[session_id].append({"role": "assistant", "content": response})
         
         return response
