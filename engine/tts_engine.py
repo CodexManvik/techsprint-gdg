@@ -1,100 +1,75 @@
-import os
-import io
+"""
+Local TTS Engine using pyttsx3 (offline text-to-speech)
+NO GOOGLE CLOUD DEPENDENCIES
+"""
 import base64
-from google.cloud import texttospeech
-
-# Voice profiles for different personas using Google Cloud TTS
-VOICE_PROFILES = {
-    "Google_SRE": {"name": "en-US-Neural2-D", "gender": "MALE"},  # Professional
-    "Amazon_LP": {"name": "en-US-Neural2-F", "gender": "FEMALE"},  # Authoritative
-    "Meta_E5": {"name": "en-US-Neural2-A", "gender": "MALE"},  # Calm
-    "Netflix_Architect": {"name": "en-US-Neural2-C", "gender": "FEMALE"},  # Confident
-    "Apple_Design": {"name": "en-US-Neural2-E", "gender": "FEMALE"},  # Precise
-    "Microsoft_Azure": {"name": "en-US-Neural2-J", "gender": "MALE"},  # Professional
-    "Stripe_Infra": {"name": "en-US-Neural2-I", "gender": "MALE"},  # Calm
-    "Uber_Backend": {"name": "en-US-Neural2-H", "gender": "FEMALE"},  # Energetic
-    "Airbnb_Fullstack": {"name": "en-US-Neural2-G", "gender": "FEMALE"},  # Friendly
-    "Startup_Founder": {"name": "en-US-Neural2-D", "gender": "MALE"},  # Dynamic
-    "Hedge_Fund_Quant": {"name": "en-GB-Neural2-B", "gender": "MALE"},  # Serious British
-    "FAANG_Behavioral": {"name": "en-US-Neural2-C", "gender": "FEMALE"},  # Warm
-    "default": {"name": "en-US-Neural2-D", "gender": "MALE"}
-}
+import io
+import pyttsx3
 
 class TTSEngine:
     def __init__(self):
-        self.client = None
+        """Initialize local TTS engine"""
+        self.engine = pyttsx3.init()
         self.current_persona = "default"
         
-        try:
-            # Try to find google_credentials.json in project root
-            credentials_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'google_credentials.json')
-            
-            if os.path.exists(credentials_path):
-                # Set environment variable to use this file
-                os.environ['GOOGLE_APPLICATION_CREDENTIALS'] = credentials_path
-                print(f"✅ Found credentials at: {credentials_path}")
-            
-            # Initialize Google Cloud TTS client
-            self.client = texttospeech.TextToSpeechClient()
-            print("✅ TTS: Google Cloud Text-to-Speech Connected")
-        except Exception as e:
-            print(f"⚠️ TTS Error: {e}")
-            print("ℹ️ Falling back to basic TTS. Place google_credentials.json in project root for better quality.")
-
+        # Configure voice properties
+        self.engine.setProperty('rate', 160)  # Speed
+        self.engine.setProperty('volume', 0.9)  # Volume
+        
+        # Get available voices
+        voices = self.engine.getProperty('voices')
+        if voices:
+            # Use first available voice (usually system default)
+            self.engine.setProperty('voice', voices[0].id)
+            print(f"✅ Local TTS initialized with voice: {voices[0].name}")
+        else:
+            print("⚠️ No voices found, using system default")
+    
     def set_persona(self, persona_key):
-        """Set the voice based on the interviewer persona"""
+        """Set voice parameters based on persona (simplified for local TTS)"""
         self.current_persona = persona_key
-
+        
+        # Adjust speaking rate based on persona
+        persona_rates = {
+            "Google_SRE": 150,
+           "Amazon_LP": 155,
+            "Meta_E5": 145,
+            "Netflix_Architect": 165,
+            "default": 160
+        }
+        rate = persona_rates.get(persona_key, 160)
+        self.engine.setProperty('rate', rate)
+    
     def generate_audio(self, text):
         """
-        Generates audio from text using Google Cloud TTS and returns a Base64 string.
-        Falls back to gTTS if Google Cloud is not available.
+        Generate audio from text using local TTS.
+        Returns base64-encoded WAV audio.
         """
         try:
-            if self.client:
-                # Google Cloud TTS (High Quality)
-                voice_profile = VOICE_PROFILES.get(self.current_persona, VOICE_PROFILES["default"])
-                
-                synthesis_input = texttospeech.SynthesisInput(text=text)
-                
-                voice = texttospeech.VoiceSelectionParams(
-                    language_code="en-US" if "GB" not in voice_profile["name"] else "en-GB",
-                    name=voice_profile["name"],
-                    ssml_gender=getattr(texttospeech.SsmlVoiceGender, voice_profile["gender"])
-                )
-                
-                audio_config = texttospeech.AudioConfig(
-                    audio_encoding=texttospeech.AudioEncoding.MP3,
-                    speaking_rate=1.0,
-                    pitch=0.0
-                )
-                
-                response = self.client.synthesize_speech(
-                    input=synthesis_input,
-                    voice=voice,
-                    audio_config=audio_config
-                )
-                
-                return base64.b64encode(response.audio_content).decode('utf-8')
+            # Create a BytesIO buffer
+            buffer = io.BytesIO()
             
-            else:
-                # Fallback to gTTS (Basic Quality)
-                from gtts import gTTS
-                tts = gTTS(text=text, lang='en', slow=False)
-                buffer = io.BytesIO()
-                tts.write_to_fp(buffer)
-                buffer.seek(0)
-                return base64.b64encode(buffer.read()).decode('utf-8')
-
+            # Save to buffer (pyttsx3 saves to file, so we use temp file)
+            import tempfile
+            import os
+            
+            with tempfile.NamedTemporaryFile(delete=False, suffix='.wav') as tmp:
+                tmp_path = tmp.name
+            
+            # Generate speech to file
+            self.engine.save_to_file(text, tmp_path)
+            self.engine.runAndWait()
+            
+            # Read the file and convert to base64
+            with open(tmp_path, 'rb') as audio_file:
+                audio_data = audio_file.read()
+            
+            # Cleanup temp file
+            os.remove(tmp_path)
+            
+            # Return base64 encoded audio
+            return base64.b64encode(audio_data).decode('utf-8')
+            
         except Exception as e:
-            print(f"❌ TTS Generation Failed: {e}")
-            # Last resort fallback
-            try:
-                from gtts import gTTS
-                tts = gTTS(text=text, lang='en', slow=False)
-                buffer = io.BytesIO()
-                tts.write_to_fp(buffer)
-                buffer.seek(0)
-                return base64.b64encode(buffer.read()).decode('utf-8')
-            except:
-                return None
+            print(f"❌ Local TTS Generation Failed: {e}")
+            return None

@@ -5,10 +5,28 @@ from engine.difficulty import get_difficulty_prompt
 from engine.personas import get_persona_prompt
 
 class AIEngine:
-    def __init__(self):
+    api_call_count = 0
+
+    def __init__(self, require_google=False):
+        """
+        Initialize AI Engine.
+        
+        Args:
+            require_google: If True, raises error when Google API key is missing.
+                           If False, allows initialization without Google (for Ollama backend).
+        """
         api_key = os.getenv("GOOGLE_API_KEY")
+        
         if not api_key:
-            raise ValueError("CRITICAL: GOOGLE_API_KEY not found.")
+            if require_google:
+                raise ValueError("CRITICAL: GOOGLE_API_KEY not found.")
+            else:
+                print("ℹ️ Google API key not found - AIEngine will not be available")
+                print("   Using Ollama backend instead")
+                self.client = None
+                self.model_id = None
+                self.chat = None
+                return
         
         self.client = genai.Client(api_key=api_key)
         self.model_id = "gemini-flash-latest" 
@@ -17,11 +35,6 @@ class AIEngine:
     def reset_session(self, style="FAANG_Architect", difficulty="Intermediate", topic="System Design", resume_context=None, custom_instructions=None):
         """Initializes the AI with the specific persona, difficulty, and topic."""
         try:
-<<<<<<< Updated upstream
-            persona_prompt = get_persona_prompt(style)
-            difficulty_prompt = get_difficulty_prompt(difficulty)
-            
-=======
             AIEngine.api_call_count += 1
             print(f"🔢 API Call #{AIEngine.api_call_count} - reset_session")
             print(f"🎯 Initializing AI with:")
@@ -39,7 +52,6 @@ class AIEngine:
             difficulty_prompt = get_difficulty_prompt(difficulty)
             print(f"✅ Difficulty prompt loaded: {difficulty_prompt[:100]}...")
             
->>>>>>> Stashed changes
             base_instructions = (
                 f"{persona_prompt}\n\n"
                 f"{difficulty_prompt}\n\n"
@@ -83,10 +95,6 @@ class AIEngine:
         response = self.chat.send_message(prompt)
         return response.text
 
-<<<<<<< Updated upstream
-    def generate_feedback_report(self, transcript_text):
-        """Generates the final JSON report for the frontend."""
-=======
     def generate_feedback_report(self, chat_history):
         """Generates the final JSON report for the frontend with per-message analysis."""
         
@@ -107,65 +115,51 @@ class AIEngine:
             for msg_id in user_message_ids:
                 detailed_analysis.append({
                     "id": msg_id,
-                    "rating": 8,
-                    "feedback": "Good response.",
-                    "improved_answer": "A more concise version."
+                    "rating": 75,
+                    "feedback": "[DEV MODE] Mock feedback",
+                    "improved_answer": "[DEV MODE] Mock improved answer"
                 })
-                
             return {
-                "summary": "Mock interview report for development. The candidate demonstrated good technical knowledge.",
-                "overall_score": 78,
+                "summary": "[DEV MODE] Mock Interview Summary",
+                "overall_score": 75,
                 "radar_chart": {
                     "technical_accuracy": 75,
-                    "communication_clarity": 70,
+                    "communication_clarity": 75,
                     "confidence_level": 75,
-                    "problem_solving": 80,
-                    "cultural_fit": 70
+                    "problem_solving": 75,
+                    "cultural_fit": 75
                 },
-                "detailed_analysis": detailed_analysis,
-                "feedback": {
-                    "strengths": ["Clear communication", "Good technical knowledge"],
-                    "improvements": ["Maintain eye contact", "Reduce nervous gestures"],
-                    "hiring_verdict": "HIRE"
-                }
+                "detailed_analysis": detailed_analysis
             }
         
->>>>>>> Stashed changes
+        # REAL AI REPORT
         prompt = f"""
-        Analyze this interview transcript and return a detailed JSON report.
-        
-        TRANSCRIPT:
-        {transcript_text}
-        
-        INSTRUCTIONS:
-        1. Evaluate the candidate overall on 5 dimensions (0-100).
-        2. For EACH user message (marked with [id] USER: ...), provide:
-           - Rating (1-10)
-           - Brief Feedback (1 sentence)
-           - Better Answer (how they should have answered)
-        3. Provide a summary and hiring verdict.
-        
-        REQUIRED JSON FORMAT:
-        {{
-            "summary": "2-sentence summary.",
-            "overall_score": <0-100>,
-            "radar_chart": {{
-                "technical_accuracy": <0-100>,
-                "communication_clarity": <0-100>,
-                "confidence_level": <0-100>,
-                "problem_solving": <0-100>,
-                "cultural_fit": <0-100>
-            }},
-            "detailed_analysis": [
-                {{
-                    "id": <id from transcript>,
-                    "rating": <1-10>,
-                    "feedback": "...",
-                    "improved_answer": "..."
-                }}
-            ]
-        }}
-        """
+Based on the following interview transcript, generate a comprehensive JSON report.
+
+IMPORTANT:
+1. For "detailed_analysis", include an entry for EVERY user message ID shown.
+2. Each entry must have: "id" (the message ID number), "rating" (1-100), "feedback" (2 sentences), "improved_answer" (better version).
+
+TRANSCRIPT:
+{transcript_text}
+
+Expected JSON format:
+{{
+  "summary": "Overall interview assessment (2-3 sentences)",
+  "overall_score": 75,
+  "radar_chart": {{
+    "technical_accuracy": 75,
+    "communication_clarity": 75,
+    "confidence_level": 75,
+    "problem_solving": 75,
+    "cultural_fit": 75
+  }},
+  "detailed_analysis": [
+    {{"id": 1, "rating": 80, "feedback": "...", "improved_answer": "..."}},
+    {{"id": 2, "rating": 70, "feedback": "...", "improved_answer": "..."}}
+  ]
+}}
+"""
         
         try:
             response = self.client.models.generate_content(
@@ -176,10 +170,7 @@ class AIEngine:
             return json.loads(response.text)
         except Exception as e:
             print(f"Report Gen Error: {e}")
-<<<<<<< Updated upstream
-            return None
-=======
-            # Return fallback report on error instead of None
+            # Return fallback report on error
             return {
                 "summary": "Interview completed. Detailed metrics available in analytics section.",
                 "overall_score": 70,
@@ -192,4 +183,3 @@ class AIEngine:
                 },
                 "detailed_analysis": []
             }
->>>>>>> Stashed changes

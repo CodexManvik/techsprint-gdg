@@ -52,8 +52,6 @@ class StartSessionRequest(BaseModel):
     difficulty: str
     topic: str
     resume_text: str = None
-<<<<<<< Updated upstream
-=======
     custom_instructions: str = None
 
 class UserRegister(BaseModel):
@@ -64,8 +62,6 @@ class UserRegister(BaseModel):
 class UserLogin(BaseModel):
     email: str
     password: str
-    resume_text: str = None
->>>>>>> Stashed changes
 
 # --- Endpoints ---
 
@@ -148,31 +144,16 @@ async def get_session_messages(session_id: str, current_user: TokenData = Depend
     messages = db.get_messages(session_id)
     return messages
 
-@app.post("/start_interview")
-<<<<<<< Updated upstream
-async def start_interview_session(req: StartSessionRequest):
+@app.post("/api/start-interview")
+async def start_interview_session(req: StartSessionRequest, current_user: TokenData = Depends(auth_engine.get_current_user)):
+    """Start a new interview session."""
     session_id = str(uuid.uuid4())
     
-    # Initialize Session
-    sessions[session_id] = InterviewSession(
-        session_id, 
-        company_focus=req.persona, 
-        difficulty=req.difficulty, 
-        topic=req.topic
-    )
-=======
-@app.post("/api/start-interview")
-async def start_interview_session(req: StartSessionRequest = None, current_user: TokenData = Depends(auth_engine.get_current_user)):
-    """Start a new interview session with optional parameters."""
-    # Use provided session_id or generate new one
-    session_id = req.session_id if req and req.session_id else str(uuid.uuid4())
-    
-    # Use defaults if no request body provided
-    persona = req.persona if req else "FAANG_Architect"
-    difficulty = req.difficulty if req else "Intermediate"
-    topic = req.topic if req else "System Design"
-    resume_text = req.resume_text if req else None
-    custom_instructions = req.custom_instructions if req else None
+    persona = req.persona
+    difficulty = req.difficulty
+    topic = req.topic
+    resume_text = req.resume_text
+    custom_instructions = req.custom_instructions
     
     print(f"🚀 Starting interview session:")
     print(f"   - Session ID: {session_id}")
@@ -180,35 +161,27 @@ async def start_interview_session(req: StartSessionRequest = None, current_user:
     print(f"   - Difficulty: {difficulty}")
     print(f"   - Topic: {topic}")
     
-    # Initialize Session (or reuse existing)
-    if session_id not in sessions:
-        sessions[session_id] = InterviewSession(
-            session_id, 
-            company_focus=persona, 
-            difficulty=difficulty, 
-            topic=topic
-        )
-        # DB: Create session
-        db.create_session(session_id, current_user.user_id, persona, topic, difficulty)
->>>>>>> Stashed changes
+    # Initialize Session
+    sessions[session_id] = InterviewSession(
+        session_id, 
+        company_focus=persona, 
+        difficulty=difficulty, 
+        topic=topic
+    )
+    
+    # DB: Create session
+    db.create_session(session_id, current_user.user_id, persona, topic, difficulty)
     
     # Set TTS voice based on persona
-    tts.set_persona(req.persona)
+    tts.set_persona(persona)
     
     # Initialize AI with specific context
     opening_question = ai.reset_session(
-<<<<<<< Updated upstream
-        style=req.persona, 
-        difficulty=req.difficulty, 
-        topic=req.topic,
-        resume_context=req.resume_text
-=======
         style=persona, 
         difficulty=difficulty, 
         topic=topic,
         resume_context=resume_text,
         custom_instructions=custom_instructions
->>>>>>> Stashed changes
     )
     
     return {"session_id": session_id, "opening_question": opening_question}
@@ -223,15 +196,9 @@ async def upload_resume(file: UploadFile = File(...)):
     except Exception as e:
         return {"status": "error", "message": str(e)}
 
-@app.get("/interview_report/{session_id}")
-<<<<<<< Updated upstream
-async def get_report(session_id: str):
-    if session_id not in sessions:
-        raise HTTPException(status_code=404, detail="Session not found")
-=======
 @app.get("/api/report")
 async def get_report(session_id: str = None):
-    print(f"📊 Report requested for session: {session_id}")
+    print(f"📋 Report requested for session: {session_id}")
     
     # If no session_id provided, return mock data for testing
     if not session_id:
@@ -254,21 +221,11 @@ async def get_report(session_id: str = None):
             "integrityEvents": [],
             "totalDuration": 0
         }
->>>>>>> Stashed changes
         
     # Fetch Session & Analytics
     session = sessions.get(session_id)
     analytics = session.get_analytics() if session else {}
     
-<<<<<<< Updated upstream
-    # Generate AI Feedback based on the full transcript
-    ai_report = ai.generate_feedback_report(analytics["transcript_text"])
-    
-    return {
-        "analytics": analytics,
-        "ai_report": ai_report
-    }
-=======
     if not analytics and session_id:
         # Try to load from DB if memory session is gone (reloaded server)
         db_session = db.get_session(session_id)
@@ -279,7 +236,6 @@ async def get_report(session_id: str = None):
     chat_history = db.get_messages(session_id)
     
     # Generate AI Feedback based on the full chat history
-    # Pass the structured chat history to the AI engine
     ai_report = ai.generate_feedback_report(chat_history)
     
     # Update DB with final report
@@ -287,9 +243,6 @@ async def get_report(session_id: str = None):
     
     # Update individual message ratings in DB
     for msg_analysis in ai_report.get("detailed_analysis", []):
-        # Find matching message in DB (by index or content match, simplified here)
-        # In a real app we'd map IDs. For now, we assume sequential order match or updated logic in AI engine.
-        # AI Engine will return a list of {id, rating, feedback, improved_answer}
         if "id" in msg_analysis:
             db.update_message_analysis(
                 msg_analysis["id"], 
@@ -322,10 +275,9 @@ async def get_report(session_id: str = None):
         "chatLog": updated_chat_history
     }
 
-    print(f"📊 Returning analytics + AI report")
+    print(f"📋 Returning analytics + AI report")
     
     return report_data
->>>>>>> Stashed changes
 
 #
 @app.websocket("/ws/interview/{session_id}")
@@ -334,15 +286,23 @@ async def interview_endpoint(websocket: WebSocket, session_id: str):
     
     # 1. Reconnect Logic
     if session_id not in sessions:
-        sessions[session_id] = InterviewSession(session_id)
-<<<<<<< Updated upstream
-=======
-        # DB: Ensure session exists (reconnect scenario)
-        db.create_session(session_id, "Unknown", "General", "Medium") 
-        print(f"📝 Created new session: {session_id} (waiting for initialization)")
+        # Try to load from DB first
+        db_session = db.get_session(session_id)
+        if db_session:
+            # Restore from DB
+            sessions[session_id] = InterviewSession(
+                session_id,
+                company_focus=db_session.get('persona', 'General'),
+                difficulty=db_session.get('difficulty', 'Medium'),
+                topic=db_session.get('topic', 'General')
+            )
+            print(f"🔄 Restored session from DB: {session_id}")
+        else:
+            # New session (waiting for /api/start-interview call)
+            sessions[session_id] = InterviewSession(session_id)
+            print(f"📝 Created new session: {session_id} (waiting for initialization)")
     else:
         print(f"🔄 Reconnecting to existing session: {session_id}")
->>>>>>> Stashed changes
     
     current_session = sessions[session_id]
     
@@ -392,30 +352,13 @@ async def interview_endpoint(websocket: WebSocket, session_id: str):
                         # 3. Log Interaction
                         current_session.log_interaction(user_text, ai_reply)
                         
-<<<<<<< Updated upstream
-                        # 4. Generate Audio
-                        print("🔊 Generating TTS audio...")
-                        audio_b64 = tts.generate_audio(ai_reply)
-=======
                         # DB: Log messages
                         db.add_message(session_id, "user", user_text)
                         db.add_message(session_id, "ai", ai_reply)
                         
-                        # Generate TTS audio for backend mode
-                        audio_b64 = None
-                        if mode == "backend":
-                            print("🔊 Generating TTS audio...")
-                            audio_b64 = tts.generate_audio(ai_reply)
-                            if audio_b64:
-                                print(f"✅ Audio generated: {len(audio_b64)} characters")
-                        
-                        # Send response
-                        response = {
-                            "type": "ai_response",
-                            "reply": ai_reply,
-                            "transcript": user_text
-                        }
->>>>>>> Stashed changes
+                        # Generate TTS audio
+                        print("🔊 Generating TTS audio...")
+                        audio_b64 = tts.generate_audio(ai_reply)
                         
                         if audio_b64:
                             print(f"✅ Audio generated: {len(audio_b64)} characters (base64)")
@@ -426,7 +369,7 @@ async def interview_endpoint(websocket: WebSocket, session_id: str):
                             "type": "ai_response",
                             "reply": ai_reply,
                             "transcript": user_text,
-                            "audio": audio_b64  # Send the audio file
+                            "audio": audio_b64
                         }))
                         print("📤 Response sent to frontend")
 

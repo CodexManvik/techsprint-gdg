@@ -19,3 +19,10 @@ multipart
 google-cloud-speech
 google-cloud-texttospeech
 bcrypt<4.0.0
+
+# Backend refactoring dependencies
+httpx
+pydantic-settings
+redis[hiredis]
+aiosqlite
+

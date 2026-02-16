@@ -1,6 +1,8 @@
 # --- Secrets & Environment ---
 .env
 google_credentials.json
+.agent/
+.kiro/
 
 # --- Python ---
 __pycache__/
@@ -23,6 +25,7 @@ dist/
 build/
 .npm/
 *.log
+logs/
 
 # --- Database ---
 *.db
@@ -43,3 +46,5 @@ Thumbs.db
 # --- Binaries ---
 ffmpeg.exe
 ffprobe.exe
+
+ai_shader/
