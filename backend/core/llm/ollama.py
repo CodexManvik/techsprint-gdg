@@ -22,6 +22,21 @@ class OllamaClient(LLMClient):
             timeout=httpx.Timeout(settings.LLM_TIMEOUT)
         )
         self.model = settings.OLLAMA_MODEL
+
+    @staticmethod
+    def _extract_content(data: dict) -> str:
+        """Extract text content from slight Ollama payload variations."""
+        message = data.get("message")
+        if isinstance(message, dict) and isinstance(message.get("content"), str):
+            return message["content"]
+
+        if isinstance(data.get("response"), str):
+            return data["response"]
+
+        if isinstance(data.get("content"), str):
+            return data["content"]
+
+        return ""
         
     async def chat(
         self, 
@@ -41,6 +56,11 @@ class OllamaClient(LLMClient):
             "model": self.model,
             "messages": messages,
             "stream": stream,
+            "options": {
+                "temperature": kwargs.pop("temperature", settings.LLM_TEMPERATURE),
+                "top_p": kwargs.pop("top_p", settings.LLM_TOP_P),
+                "num_predict": kwargs.pop("max_tokens", settings.LLM_MAX_NEW_TOKENS),
+            },
             **kwargs
         }
         
@@ -55,11 +75,18 @@ class OllamaClient(LLMClient):
             response = await self.client.post("/api/chat", json=payload)
             response.raise_for_status()
             data = response.json()
-            return data["message"]["content"]
+            content = self._extract_content(data)
+            if content:
+                return content
+            raise RuntimeError("Ollama response parsing error: content field missing")
         except httpx.HTTPStatusError as e:
-            raise RuntimeError(f"Ollama API error: {e.response.status_code} - {e.response.text}")
+            raise RuntimeError(
+                f"Ollama HTTP status error ({e.response.status_code}): {e.response.text}"
+            )
+        except httpx.TimeoutException as e:
+            raise RuntimeError(f"Ollama timeout error after {settings.LLM_TIMEOUT}s") from e
         except httpx.RequestError as e:
-            raise RuntimeError(f"Ollama connection error: {str(e)}")
+            raise RuntimeError(f"Ollama connection error: {str(e)}") from e
     
     async def _stream_chat(self, payload: dict) -> AsyncIterator[str]:
         """Streaming chat completion (yields tokens as they arrive)"""
@@ -70,14 +97,17 @@ class OllamaClient(LLMClient):
                     if line.strip():
                         try:
                             chunk = json.loads(line)
-                            if "message" in chunk:
-                                yield chunk["message"]["content"]
+                            content = self._extract_content(chunk)
+                            if content:
+                                yield content
                         except json.JSONDecodeError:
                             continue
         except httpx.HTTPStatusError as e:
-            raise RuntimeError(f"Ollama streaming error: {e.response.status_code}")
+            raise RuntimeError(f"Ollama streaming HTTP status error: {e.response.status_code}")
+        except httpx.TimeoutException as e:
+            raise RuntimeError(f"Ollama streaming timeout after {settings.LLM_TIMEOUT}s") from e
         except httpx.RequestError as e:
-            raise RuntimeError(f"Ollama connection error: {str(e)}")
+            raise RuntimeError(f"Ollama streaming connection error: {str(e)}") from e
     
     async def health_check(self) -> bool:
         """Verify Ollama server is running"""

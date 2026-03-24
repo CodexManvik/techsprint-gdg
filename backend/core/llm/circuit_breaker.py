@@ -41,6 +41,9 @@ class CircuitBreaker:
         self.failure_count = 0
         self.last_failure_time = 0.0
         self.state_lock = asyncio.Lock()  # Protect concurrent state access
+        self.total_calls = 0
+        self.total_failures = 0
+        self.open_transitions = 0
     
     async def call(self, func: Callable, *args, **kwargs) -> Any:
         """
@@ -53,6 +56,9 @@ class CircuitBreaker:
         Returns:
             Function result OR fallback message if circuit is open
         """
+        async with self.state_lock:
+            self.total_calls += 1
+
         # Check if circuit should transition from OPEN -> HALF_OPEN (with lock)
         async with self.state_lock:
             if self.state == CircuitState.OPEN:
@@ -90,13 +96,30 @@ class CircuitBreaker:
             
             # Update failure state (with lock)
             async with self.state_lock:
+                self.total_failures += 1
                 self.failure_count += 1
                 self.last_failure_time = time.time()
                 
                 # Should we open the circuit?
                 if self.failure_count >= self.failure_threshold:
                     logger.warning(f"Circuit breaker OPENING after {self.failure_count} failures")
+                    if self.state != CircuitState.OPEN:
+                        self.open_transitions += 1
                     self.state = CircuitState.OPEN
             
             # Return fallback for now
             return self.fallback_message
+
+    async def snapshot(self) -> dict[str, Any]:
+        """Return current state and observability counters."""
+        async with self.state_lock:
+            return {
+                "state": self.state.value,
+                "failure_count": self.failure_count,
+                "failure_threshold": self.failure_threshold,
+                "recovery_timeout": self.recovery_timeout,
+                "last_failure_time": self.last_failure_time,
+                "total_calls": self.total_calls,
+                "total_failures": self.total_failures,
+                "open_transitions": self.open_transitions,
+            }

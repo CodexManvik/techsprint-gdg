@@ -3,16 +3,23 @@ FastAPI Application Factory for Interview Mirror Backend
 
 This is the new entrypoint using the refactored backend architecture.
 """
-import asyncio
+from __future__ import annotations
+
 from contextlib import asynccontextmanager
+from pathlib import Path
+import logging
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from backend.config.settings import settings
 from backend.core.cache import redis_cache
-from backend.core.llm.ollama import OllamaClient  
+from backend.core.llm.ollama import OllamaClient
 from backend.core.interview.engine import InterviewEngine
-from backend.db.repository import init_db, close_db
+from backend.db.repository import init_db, close_db, get_db
+from backend.core.telemetry.metrics import metrics
+
+
+logger = logging.getLogger(__name__)
 
 # Global instances (initialized in lifespan)
 interview_engine: InterviewEngine = None
@@ -32,7 +39,11 @@ async def lifespan(app: FastAPI):
     - Cleanup on shutdown
     """
     # === STARTUP ===
-    print("🚀 Starting Interview Mirror Backend...")
+    logger.info("Starting Interview Mirror Backend")
+
+    # Warn if legacy root app.py still exists.
+    if Path("app.py").exists():
+        logger.warning("Legacy entrypoint app.py detected. Use backend.main:app for production runtime")
     
     # 1. Initialize async database
     await init_db()
@@ -47,28 +58,30 @@ async def lifespan(app: FastAPI):
     # 4. Health check LLM
     llm_healthy = await llm_client.health_check()
     if llm_healthy:
-        print(f"✅ LLM Connected: {settings.OLLAMA_MODEL} @ {settings.OLLAMA_BASE_URL}")
+        logger.info("LLM connected model=%s base_url=%s", settings.OLLAMA_MODEL, settings.OLLAMA_BASE_URL)
     else:
-        print(f"⚠️ LLM Connection Failed - Circuit breaker will handle fallback")
+        logger.warning("LLM connection check failed - circuit breaker will handle fallback")
     
     # 5. Create interview engine
     interview_engine = InterviewEngine()
-    print("✅ Interview Engine initialized")
+    logger.info("Interview Engine initialized")
     
-    print("✅ Backend startup complete\n")
+    logger.info("Backend startup complete")
     
     yield  # Application runs here
     
     # === SHUTDOWN ===
-    print("\n🔄 Shutting down...")
+    logger.info("Shutting down backend")
     
     # Cleanup connections
     await close_db()
-    await llm_client.close()
+    if llm_client is not None:
+        await llm_client.close()
     await redis_cache.close()
-    await interview_engine.close()
+    if interview_engine is not None:
+        await interview_engine.close()
     
-    print("✅ Shutdown complete")
+    logger.info("Shutdown complete")
 
 
 def create_app() -> FastAPI:
@@ -108,6 +121,50 @@ def create_app() -> FastAPI:
             "version": "4.0-Refactored",
             "llm_provider": settings.LLM_PROVIDER,
             "llm_model": settings.OLLAMA_MODEL if settings.LLM_PROVIDER == "ollama" else "gemini-flash"
+        }
+
+    @app.get("/health")
+    async def health():
+        db = await get_db()
+        redis_connected = await redis_cache.is_connected()
+        llm_healthy = await llm_client.health_check() if llm_client else False
+        breaker_snapshot = (
+            await interview_engine.circuit_breaker.snapshot()
+            if interview_engine
+            else {
+                "state": "uninitialized",
+                "failure_count": 0,
+                "failure_threshold": 0,
+                "recovery_timeout": 0,
+                "last_failure_time": 0.0,
+                "total_calls": 0,
+                "total_failures": 0,
+                "open_transitions": 0,
+            }
+        )
+
+        await metrics.incr("health_checks")
+        telemetry = await metrics.snapshot()
+
+        return {
+            "status": "ok",
+            "app": {
+                "env": settings.ENV,
+                "version": "4.0-Refactored",
+            },
+            "db": {
+                "connected": db.is_connected(),
+            },
+            "redis": {
+                "enabled": redis_cache.enabled,
+                "connected": redis_connected,
+            },
+            "llm": {
+                "provider": settings.LLM_PROVIDER,
+                "healthy": llm_healthy,
+            },
+            "circuit_breaker": breaker_snapshot,
+            "telemetry": telemetry,
         }
     
     # Import and include routers

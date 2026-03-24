@@ -5,6 +5,7 @@ Handles interview session CRUD operations, history, and reports.
 """
 import json
 from typing import Optional
+import logging
 from fastapi import APIRouter, HTTPException, UploadFile, File, Depends
 from pydantic import BaseModel
 from engine.auth import AuthEngine, TokenData
@@ -21,6 +22,7 @@ import io
 import uuid
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
 
 # Global instances (TODO: Move to dependency injection)
 auth_engine = AuthEngine()
@@ -66,10 +68,15 @@ async def start_interview(
     This endpoint now uses the refactored backend with circuit breaker.
     """
     session_id = str(uuid.uuid4())
-    
-    print(f"🚀 Starting interview with NEW backend:")
-    print(f"   - Session ID: {session_id}")
-    print(f"   - User: {current_user.email}")
+
+    logger.info(
+        "Starting interview session_id=%s user_email=%s persona=%s topic=%s difficulty=%s",
+        session_id,
+        current_user.email,
+        req.persona,
+        req.topic,
+        req.difficulty,
+    )
     
     # Create legacy session for compatibility
     sessions[session_id] = InterviewSession(
@@ -81,6 +88,20 @@ async def start_interview(
     
     # DB: Create session
     await db.create_session(session_id, current_user.user_id, req.persona, req.topic, req.difficulty)
+
+    # Cache initial session payload for websocket reconnect path
+    await redis_cache.set_session(
+        session_id,
+        {
+            "session_id": session_id,
+            "user_id": current_user.user_id,
+            "persona": req.persona,
+            "difficulty": req.difficulty,
+            "topic": req.topic,
+            "history": [],
+            "analytics": {},
+        },
+    )
     
     # Set TTS persona
     tts.set_persona(req.persona)
@@ -138,7 +159,8 @@ async def upload_resume(
         raise
     except Exception as e:
         # Handle PDF parsing errors or other unexpected errors
-        raise HTTPException(status_code=500, detail=f"PDF processing error: {str(e)}")
+        logger.exception("PDF processing failed")
+        raise HTTPException(status_code=500, detail="Unable to process PDF. Please upload a valid, text-based PDF.")
 
 
 @router.get("/history")
@@ -157,37 +179,32 @@ async def check_session(
     db: DatabaseRepository = Depends(get_db)
 ):
     """Verifies if a session ID is valid and active (requires authentication)"""
-    # Check in-memory
-    if session_id in sessions:
-        # Must verify ownership via database - in-memory session doesn't track user_id
-        db_session = await db.get_session(session_id)
-        if db_session and db_session.get('user_id') == current_user.user_id:
-            session_obj = sessions[session_id]
-            return {
-                "valid": True,
-                "details": {
-                    "topic": session_obj.topic,
-                    "persona": session_obj.company_focus
-                }
-            }
-        else:
+    belongs = await db.session_belongs_to_user(session_id, current_user.user_id)
+    if not belongs:
+        session_exists = await db.get_session(session_id)
+        if session_exists:
             raise HTTPException(status_code=403, detail="Access denied: You do not own this session")
+        return {"valid": False}
     
     # Check Redis
     cached = await redis_cache.get_session(session_id)
     if cached:
-        # Verify ownership from cached data
-        if cached.get('user_id') != current_user.user_id:
-            raise HTTPException(status_code=403, detail="Access denied: You do not own this session")
         return {"valid": True, "details": {"topic": cached.get("topic"), "persona": cached.get("persona")}}
     
-    # Check DB with ownership verification
+    # Check in-memory for richer details when available
+    if session_id in sessions:
+        session_obj = sessions[session_id]
+        return {
+            "valid": True,
+            "details": {
+                "topic": session_obj.topic,
+                "persona": session_obj.company_focus,
+            },
+        }
+
+    # Check DB details
     session = await db.get_session(session_id)
     if session:
-        # Verify ownership
-        if session.get('user_id') != current_user.user_id:
-            raise HTTPException(status_code=403, detail="Access denied: You do not own this session")
-        
         return {
             "valid": True,
             "details": {
@@ -206,13 +223,13 @@ async def get_session_messages(
     db: DatabaseRepository = Depends(get_db)
 ):
     """Retrieve chat history for a session (with ownership verification)"""
-    # Verify session belongs to user
-    session = await db.get_session(session_id)
-    if not session:
+    # Verify ownership first
+    belongs = await db.session_belongs_to_user(session_id, current_user.user_id)
+    if not belongs:
+        session_exists = await db.get_session(session_id)
+        if session_exists:
+            raise HTTPException(status_code=403, detail="Access denied: You do not own this session")
         raise HTTPException(status_code=404, detail="Session not found")
-    
-    if session.get('user_id') != current_user.user_id:
-        raise HTTPException(status_code=403, detail="Access denied: You do not own this session")
     
     messages = await db.get_messages(session_id)
     return messages
@@ -226,14 +243,12 @@ async def get_report(
 ):
     """
     Generate interview report with AI feedback (requires authentication and ownership).
-    
-    TODO: Migrate to use async database calls
     """
-    print(f"📋 Report requested for session: {session_id}")
+    logger.info("Report requested for session_id=%s user_id=%s", session_id, current_user.user_id)
     
     # Mock data if no session_id
     if not session_id:
-        print(f"⚠️ Session ID missing, returning mock data")
+        logger.info("Session ID missing, returning mock report")
         return {
             "summary": "Mock interview report. Start an interview to see real data.",
             "radarData": [
@@ -259,7 +274,7 @@ async def get_report(
         raise HTTPException(status_code=404, detail="Session not found")
     
     # Ownership check
-    if db_session.get('user_id') != current_user.user_id:
+    if not await db.session_belongs_to_user(session_id, current_user.user_id):
         raise HTTPException(status_code=403, detail="Access denied: You do not own this session")
     
     # Get analytics from memory or DB
@@ -281,7 +296,7 @@ async def get_report(
         ai_report = ai.generate_feedback_report(chat_history)
     else:
         # Fallback: Generate basic report without AI
-        print("ℹ️ AI Engine not available - generating basic report")
+        logger.info("AI Engine not available - generating basic report")
         ai_report = {
             "summary": "Interview completed. Metrics tracked successfully.",
             "overall_score": 75,
@@ -337,5 +352,5 @@ async def get_report(
         "chatLog": updated_chat_history
     }
     
-    print(f"📋 Returning analytics + AI report")
+    logger.info("Returning analytics report for session_id=%s", session_id)
     return report_data

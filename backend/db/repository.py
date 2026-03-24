@@ -100,6 +100,12 @@ class DatabaseRepository:
         await self._connection.execute('''
         CREATE INDEX IF NOT EXISTS idx_sessions_user_id ON sessions(user_id)
         ''')
+
+        # Compound index for user timelines
+        await self._connection.execute('''
+        CREATE INDEX IF NOT EXISTS idx_sessions_user_timestamp_desc
+        ON sessions(user_id, timestamp DESC)
+        ''')
         
         # Messages Table (Chat History)
         await self._connection.execute('''
@@ -119,6 +125,12 @@ class DatabaseRepository:
         # Create index on session_id for faster message retrieval
         await self._connection.execute('''
         CREATE INDEX IF NOT EXISTS idx_messages_session_id ON messages(session_id)
+        ''')
+
+        # Compound index for ordered transcript retrieval
+        await self._connection.execute('''
+        CREATE INDEX IF NOT EXISTS idx_messages_session_timestamp_asc
+        ON messages(session_id, timestamp ASC)
         ''')
         
         await self._connection.commit()
@@ -267,6 +279,20 @@ class DatabaseRepository:
             cursor.row_factory = aiosqlite.Row
             rows = await cursor.fetchall()
             return [dict(row) for row in rows]
+
+    async def session_belongs_to_user(self, session_id: str, user_id: str) -> bool:
+        """Check if a session is owned by a user."""
+        async with self._connection.execute(
+            '''
+            SELECT 1
+            FROM sessions
+            WHERE session_id = ? AND user_id = ?
+            LIMIT 1
+            ''',
+            (session_id, user_id),
+        ) as cursor:
+            row = await cursor.fetchone()
+            return row is not None
     
     async def update_session_analytics(
         self,
@@ -368,6 +394,10 @@ class DatabaseRepository:
             (rating, feedback, improved_answer, message_id)
         )
         await self._connection.commit()
+
+    def is_connected(self) -> bool:
+        """Return True when repository has an active connection."""
+        return self._connection is not None
 
 
 # Global database instance

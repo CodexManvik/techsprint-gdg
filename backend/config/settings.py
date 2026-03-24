@@ -6,8 +6,11 @@ from pydantic import model_validator, Field
 from typing import Literal
 import secrets
 import logging
+import os
 
 logger = logging.getLogger(__name__)
+
+_jwt_secret_logged = False
 
 
 class Settings(BaseSettings):
@@ -20,6 +23,11 @@ class Settings(BaseSettings):
     LLM_TIMEOUT: float = 5.0
     LLM_MAX_RETRIES: int = 2
     LLM_STREAM_ENABLED: bool = True
+    LLM_TEMPERATURE: float = 0.5
+    LLM_TOP_P: float = 0.9
+    LLM_MAX_NEW_TOKENS: int = 128
+    LLM_JSON_MODE: bool = True
+    MAX_CONTEXT_MESSAGES: int = 8
     
     # ===== Redis Configuration =====
     REDIS_ENABLED: bool = True
@@ -36,6 +44,7 @@ class Settings(BaseSettings):
     JWT_SECRET: str = ""  # Must be set in production, auto-generated in dev
     JWT_ALGORITHM: str = "HS256"
     JWT_EXPIRE_MINUTES: int = 1440  # 24 hours
+    WS_AUTH_REQUIRED: bool = True
     
     # ===== Application =====
     ENV: Literal["development", "production"] = "development"
@@ -45,6 +54,8 @@ class Settings(BaseSettings):
     @model_validator(mode='after')
     def validate_security_settings(self):
         """Enforce security requirements for production"""
+        global _jwt_secret_logged
+
         # JWT_SECRET enforcement
         if self.ENV == "production":
             if not self.JWT_SECRET or self.JWT_SECRET == "your_jwt_secret_change_me":
@@ -56,11 +67,12 @@ class Settings(BaseSettings):
             # Auto-generate for development
             if not self.JWT_SECRET or self.JWT_SECRET == "your_jwt_secret_change_me":
                 self.JWT_SECRET = secrets.token_urlsafe(32)
-                logger.warning(f"Auto-generated JWT_SECRET for {self.ENV} environment")
+                if not _jwt_secret_logged:
+                    logger.warning("Auto-generated JWT_SECRET for %s environment", self.ENV)
+                    _jwt_secret_logged = True
         
         # DEBUG follows ENV only if not explicitly set by user
         # Check if DEBUG was set from environment variable
-        import os
         if 'DEBUG' not in os.environ:
             # User didn't set DEBUG, derive from ENV
             if self.ENV == "development":
@@ -68,14 +80,15 @@ class Settings(BaseSettings):
             else:
                 self.DEBUG = False
         # else: preserve user's explicit DEBUG setting
+
+        # Boundaries for generation and context settings
+        self.MAX_CONTEXT_MESSAGES = max(2, min(self.MAX_CONTEXT_MESSAGES, 32))
+        self.LLM_TEMPERATURE = max(0.0, min(self.LLM_TEMPERATURE, 2.0))
+        self.LLM_TOP_P = max(0.0, min(self.LLM_TOP_P, 1.0))
+        self.LLM_MAX_NEW_TOKENS = max(16, min(self.LLM_MAX_NEW_TOKENS, 1024))
         
         return self
-    
-    class Config:
-        env_file = ".env"
-        case_sensitive = True
 
-    
     class Config:
         env_file = ".env"
         case_sensitive = True

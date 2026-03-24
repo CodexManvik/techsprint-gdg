@@ -3,10 +3,16 @@ Redis Session Cache Manager
 
 Provides fast session state persistence with automatic expiration.
 """
+from __future__ import annotations
+
 import json
 from typing import Optional
+import logging
 from redis.asyncio import Redis
 from backend.config.settings import settings
+
+
+logger = logging.getLogger(__name__)
 
 
 class RedisCache:
@@ -20,7 +26,7 @@ class RedisCache:
     async def connect(self):
         """Initialize Redis connection"""
         if not self.enabled:
-            print("ℹ️ Redis caching disabled")
+            logger.info("Redis caching disabled")
             return
             
         try:
@@ -36,17 +42,21 @@ class RedisCache:
             from urllib.parse import urlparse, urlunparse
             parsed = urlparse(settings.REDIS_URL)
             if parsed.password:
-                # Replace password with asterisks
-                masked_netloc = f"{parsed.username}:***@{parsed.hostname}:{parsed.port}"
+                host = parsed.hostname or "localhost"
+                port = f":{parsed.port}" if parsed.port else ""
+                if parsed.username:
+                    masked_netloc = f"{parsed.username}:***@{host}{port}"
+                else:
+                    masked_netloc = f"***@{host}{port}"
                 masked = parsed._replace(netloc=masked_netloc)
                 masked_url = urlunparse(masked)
             else:
                 masked_url = settings.REDIS_URL
             
-            print(f"✅ Redis connected: {masked_url}")
+            logger.info("Redis connected: %s", masked_url)
         except Exception as e:
-            print(f"⚠️ Redis connection failed: {e}")
-            print("   Falling back to database-only session storage")
+            logger.warning("Redis connection failed: %s", e)
+            logger.warning("Falling back to database-only session storage")
             self.enabled = False
     
     async def get_session(self, session_id: str) -> Optional[dict]:
@@ -57,10 +67,24 @@ class RedisCache:
         try:
             data = await self.redis.get(f"session:{session_id}")
             if data:
-                return json.loads(data)
+                loaded = json.loads(data)
+                if isinstance(loaded, dict):
+                    return loaded
         except Exception as e:
-            print(f"Redis GET error: {e}")
+            logger.error("Redis GET error for %s: %s", session_id, e)
         return None
+
+    def _normalize_session_payload(self, session_id: str, session_data: dict) -> dict:
+        """Ensure cached payload has a stable schema expected by websocket/routes."""
+        return {
+            "session_id": session_id,
+            "user_id": session_data.get("user_id"),
+            "persona": session_data.get("persona"),
+            "difficulty": session_data.get("difficulty"),
+            "topic": session_data.get("topic"),
+            "history": session_data.get("history") or [],
+            "analytics": session_data.get("analytics") or {},
+        }
     
     async def set_session(self, session_id: str, session_data: dict):
         """Store session in cache with TTL"""
@@ -68,13 +92,14 @@ class RedisCache:
             return
             
         try:
+            normalized = self._normalize_session_payload(session_id, session_data)
             await self.redis.setex(
                 f"session:{session_id}",
                 self.ttl,
-                json.dumps(session_data)
+                json.dumps(normalized, ensure_ascii=True, default=str)
             )
         except Exception as e:
-            print(f"Redis SET error: {e}")
+            logger.error("Redis SET error for %s: %s", session_id, e)
     
     async def delete_session(self, session_id: str):
         """Remove session from cache"""
@@ -84,12 +109,22 @@ class RedisCache:
         try:
             await self.redis.delete(f"session:{session_id}")
         except Exception as e:
-            print(f"Redis DELETE error: {e}")
+            logger.error("Redis DELETE error for %s: %s", session_id, e)
     
     async def close(self):
         """Cleanup Redis connection"""
         if self.redis:
             await self.redis.close()
+
+    async def is_connected(self) -> bool:
+        """Return redis connectivity status without raising."""
+        if not self.enabled or not self.redis:
+            return False
+        try:
+            await self.redis.ping()
+            return True
+        except Exception:
+            return False
 
 
 # Global cache instance
