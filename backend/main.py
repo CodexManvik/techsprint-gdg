@@ -120,7 +120,7 @@ def create_app() -> FastAPI:
             "status": "Online",
             "version": "4.0-Refactored",
             "llm_provider": settings.LLM_PROVIDER,
-            "llm_model": settings.OLLAMA_MODEL if settings.LLM_PROVIDER == "ollama" else "gemini-flash"
+            "llm_model": settings.OLLAMA_MODEL,
         }
 
     @app.get("/health")

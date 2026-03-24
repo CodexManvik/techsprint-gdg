@@ -3,13 +3,17 @@ Local Audio Engine using SpeechRecognition (offline STT)
 NO GOOGLE CLOUD DEPENDENCIES
 """
 import io
+import logging
 import speech_recognition as sr
+
+
+logger = logging.getLogger(__name__)
 
 class AudioEngine:
     def __init__(self):
         """Initialize local speech recognizer"""
         self.recognizer = sr.Recognizer()
-        print("✅ Local STT initialized (SpeechRecognition)")
+        logger.info("Local STT initialized (SpeechRecognition)")
     
     def process_audio(self, audio_bytes):
         """
@@ -23,7 +27,7 @@ class AudioEngine:
             audio_data = sr.AudioData(audio_bytes, sample_rate=16000, sample_width=2)
             
             # Use Sphinx (offline) for speech recognition
-            # Falls back to Google Web API if Sphinx not available
+            # Falls back to local Whisper if Sphinx not available
             try:
                 # Try offline recognition first (requires pocketsphinx)
                 text = self.recognizer.recognize_sphinx(audio_data)
@@ -36,11 +40,11 @@ class AudioEngine:
                     # Try using recognize_whisper if available
                     text = self.recognizer.recognize_whisper(audio_data, model="base")
                     return {"text": text, "error": None}
-                except:
+                except Exception:
                     return {"text": "", "error": "Speech recognition not available"}
         
         except Exception as e:
-            print(f"❌ Audio Processing Error: {e}")
+            logger.error("Audio processing error: %s", e)
             return {"text": "", "error": str(e)}
     
     def analyze_audio_quality(self, audio_bytes):

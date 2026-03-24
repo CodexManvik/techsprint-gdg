@@ -4,7 +4,11 @@ NO GOOGLE CLOUD DEPENDENCIES
 """
 import base64
 import io
+import logging
 import pyttsx3
+
+
+logger = logging.getLogger(__name__)
 
 class TTSEngine:
     def __init__(self):
@@ -21,9 +25,9 @@ class TTSEngine:
         if voices:
             # Use first available voice (usually system default)
             self.engine.setProperty('voice', voices[0].id)
-            print(f"✅ Local TTS initialized with voice: {voices[0].name}")
+            logger.info("Local TTS initialized with voice: %s", voices[0].name)
         else:
-            print("⚠️ No voices found, using system default")
+            logger.warning("No voices found, using system default")
     
     def set_persona(self, persona_key):
         """Set voice parameters based on persona (simplified for local TTS)"""
@@ -71,5 +75,5 @@ class TTSEngine:
             return base64.b64encode(audio_data).decode('utf-8')
             
         except Exception as e:
-            print(f"❌ Local TTS Generation Failed: {e}")
+            logger.error("Local TTS generation failed: %s", e)
             return None

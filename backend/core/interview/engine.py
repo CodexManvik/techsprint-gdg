@@ -40,13 +40,10 @@ class InterviewEngine:
         self.sessions_lock = asyncio.Lock()  # Protect concurrent access
     
     def _create_llm_client(self) -> LLMClient:
-        """Factory method for LLM client creation"""
-        if settings.LLM_PROVIDER == "ollama":
-            return OllamaClient()
-        else:
-            # Fallback to Gemini (existing implementation)
-            from engine.ai_engine import AIEngine
-            return AIEngine()  # TODO: Wrap in adapter
+        """Create local Ollama client only."""
+        if settings.LLM_PROVIDER != "ollama":
+            logger.warning("Unsupported LLM_PROVIDER=%s, forcing ollama", settings.LLM_PROVIDER)
+        return OllamaClient()
     
     
     def _sanitize_prompt(self, text: str) -> str:

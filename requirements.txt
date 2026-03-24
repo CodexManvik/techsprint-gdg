@@ -1,9 +1,6 @@
 fastapi
 uvicorn
 python-dotenv
-google-generativeai
-google-cloud-texttospeech
-google-cloud-speech
 mediapipe
 opencv-python
 numpy
@@ -12,13 +9,11 @@ pydub
 SpeechRecognition
 python-multipart
 websockets
-gtts
 passlib[bcrypt]
 python-jose[cryptography]
 multipart
-google-cloud-speech
-google-cloud-texttospeech
 bcrypt<4.0.0
+pyttsx3
 
 # Backend refactoring dependencies (PINNED for security)
 httpx==0.27.0  # Stable async HTTP client

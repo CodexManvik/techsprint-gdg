@@ -1,56 +1,87 @@
 import os
 import json
-from google import genai
+import logging
+import httpx
 from engine.difficulty import get_difficulty_prompt
 from engine.personas import get_persona_prompt
+
+
+logger = logging.getLogger(__name__)
 
 class AIEngine:
     api_call_count = 0
 
     def __init__(self, require_google=False):
-        """
-        Initialize AI Engine.
-        
-        Args:
-            require_google: If True, raises error when Google API key is missing.
-                           If False, allows initialization without Google (for Ollama backend).
-        """
-        api_key = os.getenv("GOOGLE_API_KEY")
-        
-        if not api_key:
-            if require_google:
-                raise ValueError("CRITICAL: GOOGLE_API_KEY not found.")
-            else:
-                print("ℹ️ Google API key not found - AIEngine will not be available")
-                print("   Using Ollama backend instead")
-                self.client = None
-                self.model_id = None
-                self.chat = None
-                return
-        
-        self.client = genai.Client(api_key=api_key)
-        self.model_id = "gemini-flash-latest" 
-        self.chat = None
+        """Initialize local-only AI engine backed by Ollama."""
+        self.base_url = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
+        self.model_id = os.getenv("OLLAMA_MODEL", "phi3.5:latest")
+        self.client = httpx.Client(base_url=self.base_url, timeout=20.0)
+        self.messages = []
+        self.dev_mode = os.getenv("DEV_MODE", "false").lower() == "true"
+
+        if require_google:
+            logger.warning("require_google flag is ignored; AIEngine is Ollama-only")
+
+    def _safe_json_parse(self, text: str) -> dict | None:
+        if not text:
+            return None
+        try:
+            parsed = json.loads(text)
+            return parsed if isinstance(parsed, dict) else None
+        except json.JSONDecodeError:
+            start = text.find("{")
+            end = text.rfind("}")
+            if start != -1 and end != -1 and end > start:
+                try:
+                    parsed = json.loads(text[start : end + 1])
+                    return parsed if isinstance(parsed, dict) else None
+                except json.JSONDecodeError:
+                    return None
+            return None
+
+    def _chat_once(self, messages: list[dict], *, json_mode: bool = False) -> str:
+        payload = {
+            "model": self.model_id,
+            "messages": messages,
+            "stream": False,
+            "options": {
+                "temperature": 0.5,
+                "top_p": 0.9,
+                "num_predict": 256 if json_mode else 128,
+            },
+        }
+        if json_mode:
+            payload["format"] = "json"
+
+        response = self.client.post("/api/chat", json=payload)
+        response.raise_for_status()
+        data = response.json()
+
+        message = data.get("message")
+        if isinstance(message, dict) and isinstance(message.get("content"), str):
+            return message["content"]
+        if isinstance(data.get("response"), str):
+            return data["response"]
+        return ""
 
     def reset_session(self, style="FAANG_Architect", difficulty="Intermediate", topic="System Design", resume_context=None, custom_instructions=None):
         """Initializes the AI with the specific persona, difficulty, and topic."""
         try:
             AIEngine.api_call_count += 1
-            print(f"🔢 API Call #{AIEngine.api_call_count} - reset_session")
-            print(f"🎯 Initializing AI with:")
-            print(f"   - Persona: {style}")
-            print(f"   - Difficulty: {difficulty}")
-            print(f"   - Topic: {topic}")
+            logger.info(
+                "AI reset session call=%s persona=%s difficulty=%s topic=%s",
+                AIEngine.api_call_count,
+                style,
+                difficulty,
+                topic,
+            )
             
             if custom_instructions:
-                print("✅ Using CUSTOM instructions")
                 persona_prompt = custom_instructions
             else:
                 persona_prompt = get_persona_prompt(style)
-                print(f"✅ Persona prompt loaded: {persona_prompt[:100]}...")
             
             difficulty_prompt = get_difficulty_prompt(difficulty)
-            print(f"✅ Difficulty prompt loaded: {difficulty_prompt[:100]}...")
             
             base_instructions = (
                 f"{persona_prompt}\n\n"
@@ -64,19 +95,20 @@ class AIEngine:
             if resume_context:
                 base_instructions += f"\n\nRESUME CONTEXT: {resume_context}"
 
-            self.chat = self.client.chats.create(
-                model=self.model_id,
-                config={"system_instruction": base_instructions}
+            self.messages = [{"role": "system", "content": base_instructions}]
+
+            opening = self._chat_once(
+                self.messages
+                + [{"role": "user", "content": f"Start the interview. Ask the first question about {topic}."}],
+                json_mode=False,
             )
-            print(f"✅ AI Initialized: {style} | {difficulty} | {topic}")
-            
-            # Generate an opening question based on the context
-            init_response = self.chat.send_message(f"Start the interview. Ask the first question about {topic}.")
-            return init_response.text
+            self.messages.append({"role": "assistant", "content": opening})
+            logger.info("AI initialized successfully")
+            return opening or "Hello. I am ready to begin the interview."
 
         except Exception as e:
-            print(f"⚠️ AI Init Warning: {e}")
-            self.chat = self.client.chats.create(model=self.model_id)
+            logger.warning("AI init warning: %s", e)
+            self.messages = [{"role": "system", "content": "You are conducting a professional interview."}]
             return "Hello. I'm ready to interview you. Shall we begin?"
 
     def get_response(self, user_text, metrics):
@@ -92,8 +124,14 @@ class AIEngine:
         1. Respond to the answer relevantly.
         2. If eye contact is consistently low (<0.4), briefly mention it in a supportive way *once*.
         """
-        response = self.chat.send_message(prompt)
-        return response.text
+        try:
+            self.messages.append({"role": "user", "content": prompt})
+            response_text = self._chat_once(self.messages, json_mode=False)
+            self.messages.append({"role": "assistant", "content": response_text})
+            return response_text
+        except Exception as e:
+            logger.error("AI response generation failed: %s", e)
+            return "Thank you for your answer. Could you elaborate with one concrete example?"
 
     def generate_feedback_report(self, chat_history):
         """Generates the final JSON report for the frontend with per-message analysis."""
@@ -110,7 +148,7 @@ class AIEngine:
         
         # DEV MODE: Return mock report
         if self.dev_mode:
-            print(f"🔧 DEV MODE: Mock feedback report")
+            logger.info("DEV MODE: mock feedback report")
             detailed_analysis = []
             for msg_id in user_message_ids:
                 detailed_analysis.append({
@@ -162,14 +200,22 @@ Expected JSON format:
 """
         
         try:
-            response = self.client.models.generate_content(
-                model=self.model_id,
-                contents=prompt,
-                config={"response_mime_type": "application/json"}
+            response_text = self._chat_once(
+                [
+                    {
+                        "role": "system",
+                        "content": "Return strict JSON only and no markdown.",
+                    },
+                    {"role": "user", "content": prompt},
+                ],
+                json_mode=True,
             )
-            return json.loads(response.text)
+            parsed = self._safe_json_parse(response_text)
+            if parsed:
+                return parsed
+            raise ValueError("Invalid JSON report payload from Ollama")
         except Exception as e:
-            print(f"Report Gen Error: {e}")
+            logger.error("Report generation error: %s", e)
             # Return fallback report on error
             return {
                 "summary": "Interview completed. Detailed metrics available in analytics section.",
@@ -183,3 +229,10 @@ Expected JSON format:
                 },
                 "detailed_analysis": []
             }
+
+    def close(self):
+        """Cleanup local HTTP client."""
+        try:
+            self.client.close()
+        except Exception:
+            pass

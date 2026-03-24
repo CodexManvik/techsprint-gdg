@@ -17,7 +17,7 @@ class Settings(BaseSettings):
     """Application configuration with environment variable support"""
     
     # ===== LLM Configuration =====
-    LLM_PROVIDER: Literal["ollama", "gemini"] = "ollama"
+    LLM_PROVIDER: Literal["ollama"] = "ollama"
     OLLAMA_BASE_URL: str = "http://localhost:11434"
     OLLAMA_MODEL: str = "phi3.5:latest"
     LLM_TIMEOUT: float = 5.0
@@ -37,7 +37,7 @@ class Settings(BaseSettings):
     # ===== Database =====
     DB_PATH: str = "interview_data.db"
     
-    # ===== Google Cloud (Fallback) =====
+    # Deprecated compatibility key (ignored by runtime; kept to avoid .env validation failures)
     GOOGLE_API_KEY: str | None = None
     
     # ===== Authentication =====
