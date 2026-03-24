@@ -44,7 +44,7 @@ interview_data.db
 Thumbs.db
 
 # --- Binaries ---
-ffmpeg.exe
-ffprobe.exe
-
+./ffmpeg.exe
+./ffprobe.exe
+./--db-path
 ai_shader/
