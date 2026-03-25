@@ -209,7 +209,7 @@ class Settings(BaseSettings):
     # LLM Configuration
     LLM_PROVIDER: Literal["ollama", "gemini"] = "ollama"
     OLLAMA_BASE_URL: str = "http://localhost:11434"
-    OLLAMA_MODEL: str = "phi3.5:latest"
+    OLLAMA_MODEL: str = "qwen3.5:4b"
     
     # Session Caching
     REDIS_URL: str = "redis://localhost:6379"
@@ -633,7 +633,7 @@ Download from: https://ollama.ai
 
 After installation, pull a model:
 ```bash
-ollama pull phi3.5:latest  # ~2GB, recommended
+ollama pull qwen3.5:4b  # ~2GB, recommended
 # OR
 ollama pull mistral  # ~4GB, more powerful
 ```
@@ -656,7 +656,7 @@ CORS_ORIGINS=http://localhost:3000
 # ===== LLM Configuration =====
 LLM_PROVIDER=ollama
 OLLAMA_BASE_URL=http://localhost:11434
-OLLAMA_MODEL=phi3.5:latest
+OLLAMA_MODEL=qwen3.5:4b
 LLM_TIMEOUT=5.0
 LLM_MAX_RETRIES=2
 
@@ -708,7 +708,7 @@ python -m uvicorn backend.main:app --reload --port 8000
 # ✓ 🚀 Starting Interview Mirror Backend...
 # ✓ ✅ Database connected: interview_data.db
 # ✓ ✅ Redis connected: redis://localhost:6379
-# ✓ ✅ LLM Connected: phi3.5:latest @ http://localhost:11434
+# ✓ ✅ LLM Connected: qwen3.5:4b @ http://localhost:11434
 # ✓ ✅ Interview Engine initialized
 # ✓ ✅ Backend startup complete
 # 
@@ -1205,7 +1205,7 @@ Response:
   "status": "Online",
   "version": "4.0-Refactored",
   "llm_provider": "ollama",
-  "llm_model": "phi3.5:latest"
+  "llm_model": "qwen3.5:4b"
 }
 ```
 

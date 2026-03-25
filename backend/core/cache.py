@@ -82,6 +82,7 @@ class RedisCache:
             "persona": session_data.get("persona"),
             "difficulty": session_data.get("difficulty"),
             "topic": session_data.get("topic"),
+            "job_description": session_data.get("job_description") or "",
             "history": session_data.get("history") or [],
             "analytics": session_data.get("analytics") or {},
         }

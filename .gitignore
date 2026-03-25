@@ -48,3 +48,5 @@ Thumbs.db
 ./ffprobe.exe
 ./--db-path
 ai_shader/
+interview_data.db-shm
+interview_data.db-wal

@@ -1,0 +1,204 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Interview Studio</title>
+    <link rel="icon" href="data:," />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;700&family=IBM+Plex+Sans:wght@400;500;600&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <div class="background-glow"></div>
+    <header class="topbar">
+      <h1>Interview Studio</h1>
+      <p>Job-grounded AI interviews with live coaching and post-session scoring.</p>
+    </header>
+
+    <main class="layout">
+      <section class="card auth-card">
+        <h2>Auth and API</h2>
+        <div class="grid two">
+          <label>
+            API Base URL
+            <input id="apiBase" type="text" value="http://localhost:8000" />
+          </label>
+          <label>
+            JWT Token
+            <input id="token" type="password" placeholder="Paste access token" />
+          </label>
+        </div>
+        <div class="grid three">
+          <label>
+            Full Name (for Register)
+            <input id="fullName" type="text" placeholder="Your full name" />
+          </label>
+          <label>
+            Email
+            <input id="email" type="email" placeholder="you@example.com" />
+          </label>
+          <label>
+            Password
+            <input id="password" type="password" placeholder="Your password" />
+          </label>
+        </div>
+        <div class="actions">
+          <button id="registerBtn" class="btn">Register</button>
+          <div class="row-end">
+            <button id="loginBtn" class="btn primary">Login</button>
+          </div>
+        </div>
+        <p id="authStatus" class="status">Not authenticated.</p>
+      </section>
+
+      <section class="card">
+        <h2>Interview Setup</h2>
+        <div class="grid three">
+          <label>
+            Persona
+            <select id="persona"></select>
+          </label>
+          <label>
+            Difficulty
+            <select id="difficulty"></select>
+          </label>
+          <label>
+            Topic
+            <select id="topic"></select>
+          </label>
+        </div>
+
+        <div class="grid two">
+          <label>
+            Job Description Template
+            <select id="jdPreset">
+              <option value="">Select a preset</option>
+              <option value="backend">Backend Engineer</option>
+              <option value="frontend">Frontend Engineer</option>
+              <option value="ml">ML Engineer</option>
+              <option value="product">Product Analyst</option>
+              <option value="custom">Custom JD</option>
+            </select>
+          </label>
+          <label>
+            Resume (PDF)
+            <input id="resumeFile" type="file" accept="application/pdf" />
+          </label>
+        </div>
+
+        <label>
+          Job Description
+          <textarea id="jobDescription" rows="7" placeholder="Paste the JD here or choose a preset above."></textarea>
+        </label>
+
+        <label>
+          Extra Interview Instructions (optional)
+          <textarea id="customInstructions" rows="3" placeholder="Example: focus more on API design trade-offs."></textarea>
+        </label>
+
+        <div class="actions">
+          <button id="uploadResumeBtn" class="btn">Extract Resume</button>
+          <button id="loadOptionsBtn" class="btn">Reload Config</button>
+          <button id="startInterviewBtn" class="btn primary">Start Interview</button>
+        </div>
+        <p id="setupStatus" class="status">Ready.</p>
+      </section>
+
+      <section class="card interview-card">
+        <h2>Interview Room</h2>
+        <div class="room">
+          <div class="camera-wrap">
+            <video id="camera" autoplay playsinline muted></video>
+            <div class="camera-badge">You</div>
+          </div>
+
+          <div class="robot-wrap">
+            <div id="robot" class="robot" aria-hidden="true">
+              <div class="robot-head">
+                <div class="robot-eyes">
+                  <span></span><span></span>
+                </div>
+                <div class="robot-mouth"></div>
+              </div>
+              <div class="robot-neck"></div>
+              <div class="robot-body"></div>
+            </div>
+            <div class="camera-badge">Interviewer AI</div>
+          </div>
+        </div>
+
+        <div class="actions">
+          <button id="startCameraBtn" class="btn">Start Camera</button>
+          <button id="connectWsBtn" class="btn">Connect Session Socket</button>
+          <button id="startTrackingBtn" class="btn">Start Metrics Stream</button>
+          <button id="stopTrackingBtn" class="btn" disabled>Stop Metrics Stream</button>
+          <button id="recordBtn" class="btn primary">Record Answer</button>
+          <button id="stopRecordBtn" class="btn" disabled>Stop</button>
+        </div>
+
+        <p id="interviewStatus" class="status">No active interview yet.</p>
+        <div id="chatLog" class="chat-log"></div>
+      </section>
+
+      <section class="card scorer-card">
+        <h2>Scorer</h2>
+        <div class="actions">
+          <button id="refreshReportBtn" class="btn primary">Refresh Report</button>
+        </div>
+        <div class="score-grid">
+          <article class="metric">
+            <h3>Overall Score</h3>
+            <p id="overallScore" class="score">--</p>
+          </article>
+          <article class="metric">
+            <h3>Summary</h3>
+            <p id="summary">No report yet.</p>
+          </article>
+        </div>
+        <div id="radarBars" class="bars"></div>
+        <p id="scorerStatus" class="status">Waiting for session report.</p>
+      </section>
+
+      <section class="card">
+        <h2>Sessions</h2>
+        <div class="actions">
+          <button id="loadHistoryBtn" class="btn">Load My Sessions</button>
+        </div>
+        <div id="historyList" class="history-list"></div>
+        <p id="historyStatus" class="status">No history loaded.</p>
+      </section>
+
+      <section class="card">
+        <h2>Performance Lab</h2>
+        <div class="actions">
+          <button id="healthBtn" class="btn">Health Check</button>
+          <button id="exportPerfBtn" class="btn">Export Perf JSON</button>
+          <button id="clearPerfBtn" class="btn">Clear Perf Data</button>
+        </div>
+        <div class="perf-grid">
+          <article class="metric">
+            <h3>Avg AI Turn Latency</h3>
+            <p id="avgTurnLatency" class="score">--</p>
+          </article>
+          <article class="metric">
+            <h3>P95 AI Turn Latency</h3>
+            <p id="p95TurnLatency" class="score">--</p>
+          </article>
+          <article class="metric">
+            <h3>Total Requests Timed</h3>
+            <p id="requestCount" class="score">0</p>
+          </article>
+        </div>
+        <div id="perfLog" class="perf-log"></div>
+        <p id="perfStatus" class="status">Ready to benchmark.</p>
+      </section>
+    </main>
+
+    <script src="./app.js" type="module"></script>
+  </body>
+</html>

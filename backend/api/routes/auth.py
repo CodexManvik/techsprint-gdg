@@ -11,8 +11,10 @@ from backend.db.repository import get_db, DatabaseRepository
 import uuid
 import re
 import aiosqlite
+import logging
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
 
 # Auth engine instance
 auth_engine = AuthEngine()

@@ -14,7 +14,7 @@ class AIEngine:
     def __init__(self, require_google=False):
         """Initialize local-only AI engine backed by Ollama."""
         self.base_url = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
-        self.model_id = os.getenv("OLLAMA_MODEL", "phi3.5:latest")
+        self.model_id = os.getenv("OLLAMA_MODEL", "qwen3.5:4b")
         self.client = httpx.Client(base_url=self.base_url, timeout=20.0)
         self.messages = []
         self.dev_mode = os.getenv("DEV_MODE", "false").lower() == "true"

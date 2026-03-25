@@ -89,6 +89,7 @@ class DatabaseRepository:
             persona TEXT,
             topic TEXT,
             difficulty TEXT,
+            job_description TEXT,
             summary TEXT,
             scores TEXT,
             analytics TEXT,
@@ -117,9 +118,28 @@ class DatabaseRepository:
             timestamp REAL NOT NULL,
             rating INTEGER,
             feedback TEXT,
+            evidence_json TEXT,
             improved_answer TEXT,
             FOREIGN KEY(session_id) REFERENCES sessions(session_id) ON DELETE CASCADE
         )
+        ''')
+
+        # Evidence table for richer, queryable scorer inputs and auditability.
+        await self._connection.execute('''
+        CREATE TABLE IF NOT EXISTS turn_evidence (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            session_id TEXT NOT NULL,
+            message_id INTEGER,
+            payload_json TEXT NOT NULL,
+            timestamp REAL NOT NULL,
+            FOREIGN KEY(session_id) REFERENCES sessions(session_id) ON DELETE CASCADE,
+            FOREIGN KEY(message_id) REFERENCES messages(id) ON DELETE SET NULL
+        )
+        ''')
+
+        await self._connection.execute('''
+        CREATE INDEX IF NOT EXISTS idx_turn_evidence_session_timestamp
+        ON turn_evidence(session_id, timestamp ASC)
         ''')
         
         # Create index on session_id for faster message retrieval
@@ -134,7 +154,26 @@ class DatabaseRepository:
         ''')
         
         await self._connection.commit()
+        await self._apply_migrations()
         logger.info("Database schema initialized")
+
+    async def _apply_migrations(self):
+        """Apply additive schema migrations for existing databases."""
+        await self._ensure_column("sessions", "job_description", "TEXT")
+        await self._ensure_column("messages", "evidence_json", "TEXT")
+        await self._connection.commit()
+
+    async def _ensure_column(self, table: str, column: str, column_def: str):
+        """Add a column if it does not exist."""
+        async with self._connection.execute(f"PRAGMA table_info({table})") as cursor:
+            rows = await cursor.fetchall()
+            existing = {row[1] for row in rows}
+
+        if column not in existing:
+            await self._connection.execute(
+                f"ALTER TABLE {table} ADD COLUMN {column} {column_def}"
+            )
+            logger.info("Applied migration: added column %s.%s", table, column)
     
     # ===== USER OPERATIONS =====
     
@@ -210,7 +249,8 @@ class DatabaseRepository:
         user_id: str,
         persona: str,
         topic: str,
-        difficulty: str
+        difficulty: str,
+        job_description: str | None = None,
     ) -> bool:
         """
         Create a new interview session.
@@ -228,10 +268,10 @@ class DatabaseRepository:
         try:
             await self._connection.execute(
                 '''
-                INSERT INTO sessions (session_id, user_id, timestamp, persona, topic, difficulty)
-                VALUES (?, ?, ?, ?, ?, ?)
+                INSERT INTO sessions (session_id, user_id, timestamp, persona, topic, difficulty, job_description)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
                 ''',
-                (session_id, user_id, time.time(), persona, topic, difficulty)
+                (session_id, user_id, time.time(), persona, topic, difficulty, job_description)
             )
             await self._connection.commit()
             logger.info(f"📝 Created session {session_id} for user {user_id}")
@@ -329,8 +369,9 @@ class DatabaseRepository:
         content: str,
         rating: Optional[int] = None,
         feedback: Optional[str] = None,
+        evidence_json: Optional[Dict[str, Any]] = None,
         improved_answer: Optional[str] = None
-    ) -> None:
+    ) -> int:
         """
         Add a message to the session.
         
@@ -342,14 +383,41 @@ class DatabaseRepository:
             feedback: Optional feedback
             improved_answer: Optional improved answer
         """
-        await self._connection.execute(
+        cursor = await self._connection.execute(
             '''
-            INSERT INTO messages (session_id, role, content, timestamp, rating, feedback, improved_answer)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
+            INSERT INTO messages (session_id, role, content, timestamp, rating, feedback, evidence_json, improved_answer)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
             ''',
-            (session_id, role, content, time.time(), rating, feedback, improved_answer)
+            (
+                session_id,
+                role,
+                content,
+                time.time(),
+                rating,
+                feedback,
+                json.dumps(evidence_json) if evidence_json else None,
+                improved_answer,
+            )
         )
         await self._connection.commit()
+        return int(cursor.lastrowid)
+
+    async def add_turn_evidence(
+        self,
+        session_id: str,
+        payload: Dict[str, Any],
+        message_id: Optional[int] = None,
+    ) -> int:
+        """Store structured per-turn evidence used by scorer and audits."""
+        cursor = await self._connection.execute(
+            '''
+            INSERT INTO turn_evidence (session_id, message_id, payload_json, timestamp)
+            VALUES (?, ?, ?, ?)
+            ''',
+            (session_id, message_id, json.dumps(payload), time.time()),
+        )
+        await self._connection.commit()
+        return int(cursor.lastrowid)
     
     async def get_messages(self, session_id: str) -> List[Dict[str, Any]]:
         """

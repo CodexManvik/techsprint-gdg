@@ -9,7 +9,6 @@ import logging
 from fastapi import APIRouter, HTTPException, UploadFile, File, Depends
 from pydantic import BaseModel
 from engine.auth import AuthEngine, TokenData
-from engine.ai_engine import AIEngine
 from engine.personas import get_persona_list
 from engine.difficulty import get_difficulty_list, get_topics_list
 from engine.session_manager import InterviewSession
@@ -26,7 +25,6 @@ logger = logging.getLogger(__name__)
 
 # Global instances (TODO: Move to dependency injection)
 auth_engine = AuthEngine()
-ai = None  # Lazy loaded when needed
 tts = TTSEngine()
 sessions = {}  # In-memory fallback
 
@@ -35,8 +33,9 @@ class StartSessionRequest(BaseModel):
     persona: str
     difficulty: str
     topic: str
-    resume_text: str = None
-    custom_instructions: str = None
+    job_description: Optional[str] = None
+    resume_text: Optional[str] = None
+    custom_instructions: Optional[str] = None
 
 
 async def get_interview_engine() -> InterviewEngine:
@@ -83,11 +82,19 @@ async def start_interview(
         session_id,
         company_focus=req.persona,
         difficulty=req.difficulty,
-        topic=req.topic
+        topic=req.topic,
+        job_description=req.job_description,
     )
     
     # DB: Create session
-    await db.create_session(session_id, current_user.user_id, req.persona, req.topic, req.difficulty)
+    await db.create_session(
+        session_id,
+        current_user.user_id,
+        req.persona,
+        req.topic,
+        req.difficulty,
+        req.job_description,
+    )
 
     # Cache initial session payload for websocket reconnect path
     await redis_cache.set_session(
@@ -98,6 +105,7 @@ async def start_interview(
             "persona": req.persona,
             "difficulty": req.difficulty,
             "topic": req.topic,
+            "job_description": req.job_description,
             "history": [],
             "analytics": {},
         },
@@ -112,6 +120,7 @@ async def start_interview(
         persona=req.persona,
         difficulty=req.difficulty,
         topic=req.topic,
+        job_description=req.job_description,
         resume_context=req.resume_text,
         custom_instructions=req.custom_instructions
     )
@@ -290,25 +299,30 @@ async def get_report(
     # Fetch chat history
     chat_history = await db.get_messages(session_id)
     
-    # Generate AI feedback (skip if AI engine not available)
-    ai_report = None
-    if ai:
-        ai_report = ai.generate_feedback_report(chat_history)
+    user_scored_messages = [
+        msg for msg in chat_history if msg.get("role") == "user" and msg.get("rating") is not None
+    ]
+    user_ratings = [int(msg["rating"]) for msg in user_scored_messages]
+    overall_score = int(sum(user_ratings) / len(user_ratings)) if user_ratings else 75
+
+    if overall_score >= 85:
+        summary = "Strong interview performance with clear, relevant and role-focused answers."
+    elif overall_score >= 70:
+        summary = "Good performance overall with room to improve depth and concrete examples."
     else:
-        # Fallback: Generate basic report without AI
-        logger.info("AI Engine not available - generating basic report")
-        ai_report = {
-            "summary": "Interview completed. Metrics tracked successfully.",
-            "overall_score": 75,
-            "radar_chart": {
-                "technical_accuracy": 75,
-                "communication_clarity": 75,
-                "confidence_level": 75,
-                "problem_solving": 75,
-                "cultural_fit": 75
-            },
-            "detailed_analysis": []
-        }
+        summary = "Needs improvement in structure, specificity and role-aligned depth."
+
+    ai_report = {
+        "summary": summary,
+        "overall_score": overall_score,
+        "radar_chart": {
+            "technical_accuracy": overall_score,
+            "communication_clarity": min(100, max(0, overall_score + 2)),
+            "confidence_level": min(100, max(0, overall_score - 3)),
+            "problem_solving": overall_score,
+            "cultural_fit": min(100, max(0, overall_score - 1)),
+        },
+    }
     
     # Update DB
     await db.update_session_analytics(
@@ -317,16 +331,6 @@ async def get_report(
         ai_report.get("summary", ""),
         ai_report.get("radar_chart", {})
     )
-    
-    # Update individual message ratings (only if AI provided analysis)
-    for msg_analysis in ai_report.get("detailed_analysis", []):
-        if "id" in msg_analysis:
-            await db.update_message_analysis(
-                msg_analysis["id"],
-                msg_analysis.get("rating"),
-                msg_analysis.get("feedback"),
-                msg_analysis.get("improved_answer")
-            )
     
     # Re-fetch updated chat history
     updated_chat_history = await db.get_messages(session_id)

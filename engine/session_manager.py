@@ -2,12 +2,13 @@ import time
 import json
 
 class InterviewSession:
-    def __init__(self, session_id, company_focus="General", difficulty="Medium", topic="General"):
+    def __init__(self, session_id, company_focus="General", difficulty="Medium", topic="General", job_description=""):
         self.id = session_id
         self.start_time = time.time()
         self.company_focus = company_focus
         self.difficulty = difficulty
         self.topic = topic
+        self.job_description = job_description or ""
         
         self.transcript = [] 
         

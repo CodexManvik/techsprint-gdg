@@ -19,7 +19,8 @@ class Settings(BaseSettings):
     # ===== LLM Configuration =====
     LLM_PROVIDER: Literal["ollama"] = "ollama"
     OLLAMA_BASE_URL: str = "http://localhost:11434"
-    OLLAMA_MODEL: str = "phi3.5:latest"
+    OLLAMA_MODEL: str = "qwen3.5:4b"
+    OLLAMA_SCORING_MODEL: str | None = None
     LLM_TIMEOUT: float = 5.0
     LLM_MAX_RETRIES: int = 2
     LLM_STREAM_ENABLED: bool = True
@@ -28,6 +29,25 @@ class Settings(BaseSettings):
     LLM_MAX_NEW_TOKENS: int = 128
     LLM_JSON_MODE: bool = True
     MAX_CONTEXT_MESSAGES: int = 8
+    INTERVIEW_TEMPERATURE: float = 1.0
+    INTERVIEW_TOP_P: float = 0.95
+    INTERVIEW_TOP_K: int = 20
+    INTERVIEW_MIN_P: float = 0.0
+    INTERVIEW_PRESENCE_PENALTY: float = 1.5
+    INTERVIEW_REPETITION_PENALTY: float = 1.0
+    INTERVIEW_MAX_NEW_TOKENS: int = 320
+    INTERVIEW_CONTEXT_MESSAGES: int = 14
+    SCORING_TEMPERATURE: float = 1.0
+    SCORING_TOP_P: float = 0.95
+    SCORING_TOP_K: int = 20
+    SCORING_MIN_P: float = 0.0
+    SCORING_PRESENCE_PENALTY: float = 1.5
+    SCORING_REPETITION_PENALTY: float = 1.0
+    SCORING_MAX_NEW_TOKENS: int = 220
+    SCORING_CONTEXT_MESSAGES: int = 6
+    MAX_EYE_CONTACT_REMINDERS: int = 3
+    REMINDER_COOLDOWN_SEC: int = 90
+    SCORING_QUEUE_MAXSIZE: int = 1000
     
     # ===== Redis Configuration =====
     REDIS_ENABLED: bool = True
@@ -49,7 +69,7 @@ class Settings(BaseSettings):
     # ===== Application =====
     ENV: Literal["development", "production"] = "development"
     DEBUG: bool = Field(default=False)  # Secure default: False
-    CORS_ORIGINS: str = "http://localhost:3000"  # Comma-separated list
+    CORS_ORIGINS: str = "http://localhost:3000,http://localhost:5173,http://127.0.0.1:5173"  # Comma-separated list
     
     @model_validator(mode='after')
     def validate_security_settings(self):
@@ -83,9 +103,28 @@ class Settings(BaseSettings):
 
         # Boundaries for generation and context settings
         self.MAX_CONTEXT_MESSAGES = max(2, min(self.MAX_CONTEXT_MESSAGES, 32))
+        self.INTERVIEW_CONTEXT_MESSAGES = max(4, min(self.INTERVIEW_CONTEXT_MESSAGES, 40))
+        self.SCORING_CONTEXT_MESSAGES = max(2, min(self.SCORING_CONTEXT_MESSAGES, 20))
         self.LLM_TEMPERATURE = max(0.0, min(self.LLM_TEMPERATURE, 2.0))
         self.LLM_TOP_P = max(0.0, min(self.LLM_TOP_P, 1.0))
         self.LLM_MAX_NEW_TOKENS = max(16, min(self.LLM_MAX_NEW_TOKENS, 1024))
+        self.INTERVIEW_TEMPERATURE = max(0.0, min(self.INTERVIEW_TEMPERATURE, 2.0))
+        self.INTERVIEW_TOP_P = max(0.0, min(self.INTERVIEW_TOP_P, 1.0))
+        self.INTERVIEW_TOP_K = max(1, min(self.INTERVIEW_TOP_K, 200))
+        self.INTERVIEW_MIN_P = max(0.0, min(self.INTERVIEW_MIN_P, 1.0))
+        self.INTERVIEW_PRESENCE_PENALTY = max(0.0, min(self.INTERVIEW_PRESENCE_PENALTY, 2.0))
+        self.INTERVIEW_REPETITION_PENALTY = max(0.5, min(self.INTERVIEW_REPETITION_PENALTY, 2.0))
+        self.INTERVIEW_MAX_NEW_TOKENS = max(64, min(self.INTERVIEW_MAX_NEW_TOKENS, 2048))
+        self.SCORING_TEMPERATURE = max(0.0, min(self.SCORING_TEMPERATURE, 2.0))
+        self.SCORING_TOP_P = max(0.0, min(self.SCORING_TOP_P, 1.0))
+        self.SCORING_TOP_K = max(1, min(self.SCORING_TOP_K, 200))
+        self.SCORING_MIN_P = max(0.0, min(self.SCORING_MIN_P, 1.0))
+        self.SCORING_PRESENCE_PENALTY = max(0.0, min(self.SCORING_PRESENCE_PENALTY, 2.0))
+        self.SCORING_REPETITION_PENALTY = max(0.5, min(self.SCORING_REPETITION_PENALTY, 2.0))
+        self.SCORING_MAX_NEW_TOKENS = max(64, min(self.SCORING_MAX_NEW_TOKENS, 1024))
+        self.MAX_EYE_CONTACT_REMINDERS = max(1, min(self.MAX_EYE_CONTACT_REMINDERS, 10))
+        self.REMINDER_COOLDOWN_SEC = max(15, min(self.REMINDER_COOLDOWN_SEC, 600))
+        self.SCORING_QUEUE_MAXSIZE = max(10, min(self.SCORING_QUEUE_MAXSIZE, 10000))
         
         return self
 

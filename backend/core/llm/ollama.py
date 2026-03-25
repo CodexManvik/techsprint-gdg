@@ -53,12 +53,16 @@ class OllamaClient(LLMClient):
             **kwargs: temperature, top_p, etc.
         """
         payload = {
-            "model": self.model,
+            "model": kwargs.pop("model", self.model),
             "messages": messages,
             "stream": stream,
             "options": {
                 "temperature": kwargs.pop("temperature", settings.LLM_TEMPERATURE),
                 "top_p": kwargs.pop("top_p", settings.LLM_TOP_P),
+                "top_k": kwargs.pop("top_k", 40),
+                "min_p": kwargs.pop("min_p", 0.0),
+                "presence_penalty": kwargs.pop("presence_penalty", 0.0),
+                "repeat_penalty": kwargs.pop("repetition_penalty", 1.1),
                 "num_predict": kwargs.pop("max_tokens", settings.LLM_MAX_NEW_TOKENS),
             },
             **kwargs

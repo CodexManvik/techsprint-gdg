@@ -15,6 +15,7 @@ from backend.config.settings import settings
 from backend.core.cache import redis_cache
 from backend.core.llm.ollama import OllamaClient
 from backend.core.interview.engine import InterviewEngine
+from backend.core.interview.scorer import TurnScoringService
 from backend.db.repository import init_db, close_db, get_db
 from backend.core.telemetry.metrics import metrics
 
@@ -24,6 +25,7 @@ logger = logging.getLogger(__name__)
 # Global instances (initialized in lifespan)
 interview_engine: InterviewEngine = None
 llm_client: OllamaClient = None
+turn_scorer: TurnScoringService = None
 
 
 @asynccontextmanager
@@ -52,7 +54,7 @@ async def lifespan(app: FastAPI):
     await redis_cache.connect()
     
     # 3. Initialize LLM client
-    global llm_client, interview_engine
+    global llm_client, interview_engine, turn_scorer
     llm_client = OllamaClient()
     
     # 4. Health check LLM
@@ -63,8 +65,13 @@ async def lifespan(app: FastAPI):
         logger.warning("LLM connection check failed - circuit breaker will handle fallback")
     
     # 5. Create interview engine
-    interview_engine = InterviewEngine()
+    interview_engine = InterviewEngine(llm_client=llm_client)
     logger.info("Interview Engine initialized")
+
+    # 6. Start background turn scoring worker.
+    db = await get_db()
+    turn_scorer = TurnScoringService(interview_engine, db)
+    await turn_scorer.start()
     
     logger.info("Backend startup complete")
     
@@ -74,6 +81,8 @@ async def lifespan(app: FastAPI):
     logger.info("Shutting down backend")
     
     # Cleanup connections
+    if turn_scorer is not None:
+        await turn_scorer.stop()
     await close_db()
     if llm_client is not None:
         await llm_client.close()

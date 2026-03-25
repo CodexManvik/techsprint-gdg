@@ -10,6 +10,7 @@ import time
 import logging
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect, Depends, HTTPException
 from backend.core.interview.engine import InterviewEngine
+from backend.core.interview.scorer import TurnScoringService
 from backend.core.interview.analyzer import CheatingDetector
 from backend.core.cache import redis_cache
 from backend.db.repository import db_repository
@@ -68,11 +69,18 @@ async def get_interview_engine() -> InterviewEngine:
     return interview_engine
 
 
+async def get_turn_scorer() -> TurnScoringService | None:
+    """Dependency: Get turn scoring service instance."""
+    from backend.main import turn_scorer
+    return turn_scorer
+
+
 @router.websocket("/ws/interview/{session_id}")
 async def interview_websocket(
     websocket: WebSocket,
     session_id: str,
-    engine: InterviewEngine = Depends(get_interview_engine)
+    engine: InterviewEngine = Depends(get_interview_engine),
+    scorer: TurnScoringService | None = Depends(get_turn_scorer),
 ):
     """
     Real-time interview WebSocket handler.
@@ -87,6 +95,7 @@ async def interview_websocket(
 
     # Track connection start time for accurate elapsed calculation
     connection_start_time = time.time()
+    last_tracking_time = connection_start_time
 
     # Initialize cheating detector
     cheating_detector = CheatingDetector()
@@ -130,6 +139,7 @@ async def interview_websocket(
                     company_focus=cached_session.get("persona", "General"),
                     difficulty=cached_session.get("difficulty", "Medium"),
                     topic=cached_session.get("topic", "General"),
+                    job_description=cached_session.get("job_description", ""),
                 )
                 logger.info("Restored session from Redis: %s", session_id)
             else:
@@ -140,6 +150,7 @@ async def interview_websocket(
                         company_focus=db_session.get("persona", "General"),
                         difficulty=db_session.get("difficulty", "Medium"),
                         topic=db_session.get("topic", "General"),
+                        job_description=db_session.get("job_description", ""),
                     )
                     logger.info("Restored session from DB: %s", session_id)
                 else:
@@ -151,6 +162,15 @@ async def interview_websocket(
 
         active_connections[session_id] = active_connections.get(session_id, 0) + 1
         current_session = sessions[session_id]
+
+    await websocket.send_text(
+        json.dumps(
+            {
+                "type": "connected",
+                "session_id": session_id,
+            }
+        )
+    )
 
     try:
         while True:
@@ -176,7 +196,9 @@ async def interview_websocket(
                     current_session.log_vision_metrics(metrics)
                     
                     # Check for cheating violations with actual elapsed time
-                    elapsed = time.time() - connection_start_time
+                    now = time.time()
+                    elapsed = max(0.0, now - last_tracking_time)
+                    last_tracking_time = now
                     violation = cheating_detector.check_violations(metrics, elapsed)
                     
                     response = {
@@ -225,6 +247,13 @@ async def interview_websocket(
                         current_metrics = vision.analyze_frame(payload['landmarks'])
                     
                     # 3. Get AI Response via NEW InterviewEngine
+                    prior_question = ""
+                    session_history = engine.sessions.get(session_id, [])
+                    for msg in reversed(session_history):
+                        if msg.get("role") == "assistant":
+                            prior_question = msg.get("content", "")
+                            break
+
                     ai_reply = await engine.process_turn(
                         session_id=session_id,
                         user_input=user_text,
@@ -235,11 +264,34 @@ async def interview_websocket(
                     logger.info(f"AI reply length: {len(ai_reply)} chars")
                     
                     # 4. Log interaction
+                    current_session.log_audio_metrics(analysis)
                     current_session.log_interaction(user_text, ai_reply)
                     
                     # 5. Save to DB asynchronously (non-blocking)
-                    await db.add_message(session_id, "user", user_text)
+                    user_message_id = await db.add_message(session_id, "user", user_text)
                     await db.add_message(session_id, "ai", ai_reply)
+
+                    evidence_payload = {
+                        "session_id": session_id,
+                        "message_id": user_message_id,
+                        "topic": current_session.topic,
+                        "persona": current_session.company_focus,
+                        "difficulty": current_session.difficulty,
+                        "job_description": current_session.job_description,
+                        "previous_question": prior_question,
+                        "user_text": user_text,
+                        "ai_reply": ai_reply,
+                        "metrics": current_metrics or {},
+                        "audio": {
+                            "wpm": analysis.get("wpm"),
+                            "error": analysis.get("error"),
+                        },
+                        "timestamp": time.time(),
+                    }
+                    await db.add_turn_evidence(session_id, evidence_payload, message_id=user_message_id)
+
+                    if scorer is not None:
+                        await scorer.enqueue(evidence_payload)
                     
                     # 6. Generate TTS audio
                     logger.info("Generating TTS audio...")
@@ -267,6 +319,7 @@ async def interview_websocket(
                         "persona": current_session.company_focus,
                         "difficulty": current_session.difficulty,
                         "topic": current_session.topic,
+                        "job_description": current_session.job_description,
                         "history": engine.sessions.get(session_id, []),
                         "analytics": current_session.get_analytics(),
                     }
@@ -279,8 +332,8 @@ async def interview_websocket(
             else:
                 await _send_error(websocket, "unsupported_type", "Unsupported websocket payload type")
     
-    except WebSocketDisconnect:
-        logger.info(f"WebSocket disconnected for session {session_id}")
+    except WebSocketDisconnect as exc:
+        logger.info("WebSocket disconnected for session %s code=%s", session_id, exc.code)
         
         # Session cleanup on disconnect without disrupting active peer sockets
         async with sessions_lock:
@@ -300,7 +353,7 @@ async def interview_websocket(
         logger.info(f"Session {session_id} cleanup complete")
         
     except Exception as e:
-        logger.error(f"CRITICAL Error in session {session_id}: {e}")
+        logger.exception("CRITICAL Error in session %s", session_id)
         
         # Cleanup on error without removing state for other active sockets
         async with sessions_lock:
@@ -311,3 +364,14 @@ async def interview_websocket(
                 logger.info("Cleaned up session after error: %s", session_id)
             else:
                 active_connections[session_id] = current_count - 1
+                logger.info(
+                    "Decremented active connections after error session_id=%s remaining=%s",
+                    session_id,
+                    active_connections[session_id],
+                )
+
+        try:
+            await websocket.close(code=1011)
+        except RuntimeError:
+            # Socket may already be closed by client.
+            pass
