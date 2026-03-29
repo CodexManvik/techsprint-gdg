@@ -160,6 +160,7 @@ class DatabaseRepository:
     async def _apply_migrations(self):
         """Apply additive schema migrations for existing databases."""
         await self._ensure_column("sessions", "job_description", "TEXT")
+        await self._ensure_column("sessions", "resume_text", "TEXT")  # Phase 4: Resume persistence
         await self._ensure_column("messages", "evidence_json", "TEXT")
         await self._connection.commit()
 
@@ -251,6 +252,7 @@ class DatabaseRepository:
         topic: str,
         difficulty: str,
         job_description: str | None = None,
+        resume_text: str | None = None,
     ) -> bool:
         """
         Create a new interview session.
@@ -261,6 +263,8 @@ class DatabaseRepository:
             persona: Interview persona
             topic: Interview topic
             difficulty: Difficulty level
+            job_description: Optional job description
+            resume_text: Optional resume/CV text
             
         Returns:
             True if session created, False if session already exists
@@ -268,10 +272,10 @@ class DatabaseRepository:
         try:
             await self._connection.execute(
                 '''
-                INSERT INTO sessions (session_id, user_id, timestamp, persona, topic, difficulty, job_description)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
+                INSERT INTO sessions (session_id, user_id, timestamp, persona, topic, difficulty, job_description, resume_text)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                 ''',
-                (session_id, user_id, time.time(), persona, topic, difficulty, job_description)
+                (session_id, user_id, time.time(), persona, topic, difficulty, job_description, resume_text)
             )
             await self._connection.commit()
             logger.info(f"📝 Created session {session_id} for user {user_id}")

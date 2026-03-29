@@ -36,8 +36,10 @@ class InterviewEngine:
         self.llm: LLMClient = llm_client or self._create_llm_client()
         self.circuit_breaker = CircuitBreaker(failure_threshold=3, recovery_timeout=30.0)
 
-        # Serialize model calls across interviewer/scorer for low VRAM stability.
-        self.inference_lock = asyncio.Lock()
+        # Separate locks for interviewer (real-time) vs scorer (background).
+        # On low VRAM GPU, OS-level scheduler handles queuing more efficiently than Python-level blocking.
+        self.inference_lock = asyncio.Lock()  # Live interview turns
+        self.scoring_lock = asyncio.Lock()    # Background scorer
 
         # Session message history and runtime policy state.
         self.sessions: dict[str, list[dict[str, str]]] = {}
@@ -126,9 +128,15 @@ class InterviewEngine:
         repetition_penalty: float,
         max_tokens: int,
         model: Optional[str] = None,
+        use_scoring_lock: bool = False,
     ) -> str:
-        """Run one LLM call under a shared lock to avoid model concurrency pressure."""
-        async with self.inference_lock:
+        """Run one LLM call under a lock to avoid model concurrency pressure.
+        
+        Args:
+            use_scoring_lock: If True, uses scoring_lock (background). Otherwise uses inference_lock (real-time).
+        """
+        lock = self.scoring_lock if use_scoring_lock else self.inference_lock
+        async with lock:
             response = await self.circuit_breaker.call(
                 self.llm.chat,
                 messages,
@@ -399,6 +407,7 @@ class InterviewEngine:
         topic: str,
         job_description: Optional[str] = None,
         history: Optional[list[dict[str, str]]] = None,
+        resume_context: Optional[str] = None,
     ) -> None:
         """Restore session history/state for reconnect paths after process restart."""
         safe_history = history or []
@@ -418,7 +427,7 @@ class InterviewEngine:
             topic,
             job_description,
             competencies,
-            resume_context=None,
+            resume_context,  # Phase 4: Include resume in restored system prompt
             custom_instructions=None,
         )
 
@@ -503,21 +512,54 @@ class InterviewEngine:
         return formatted
 
     async def score_turn(self, evidence: dict[str, Any]) -> dict[str, Any]:
-        """Score one user turn using the same model with a scorer-focused prompt."""
+        """Score one user turn using enriched evidence and competency-based rubric."""
+        # Extract enriched context
+        competencies = evidence.get("expected_competencies", [])
+        comp_str = ", ".join(competencies[:6]) if competencies else "general interview skills"
+        
+        speech_metrics = evidence.get("speech_metrics", {})
+        wpm = speech_metrics.get("wpm")
+        speech_ratio = speech_metrics.get("speech_ratio")
+        
+        # Build pace/delivery notes
+        pace_note = ""
+        if wpm is not None:
+            if wpm < 100:
+                pace_note = f"Candidate spoke slowly ({wpm} WPM). "
+            elif wpm > 200:
+                pace_note = f"Candidate spoke very fast ({wpm} WPM). "
+        if speech_ratio is not None and speech_ratio < 0.4:
+            pace_note += "Long silences detected — possible hesitation."
+        if not pace_note:
+            pace_note = "Normal pace."
+        
         schema_prompt = (
-            "Return strict JSON only with keys: rating, feedback, improved_answer, competency_scores. "
-            "rating must be 1..100. competency_scores must be an object with short competency keys and 1..100 values."
+            "Return strict JSON only. Keys: rating (1-100), feedback (2 sentences max, specific to THIS answer), "
+            "improved_answer (rewrite candidate's answer better), competency_scores (object, each key from the "
+            "competency list, value 1-100), communication_notes (1 sentence on delivery)."
         )
+        
+        context = (
+            f"Job: {evidence.get('job_description', 'Not specified')[:500]}\n"
+            f"Topic: {evidence.get('topic')}\n"
+            f"Difficulty: {evidence.get('difficulty')}\n"
+            f"Competencies to score: {comp_str}\n"
+            f"Question asked: {evidence.get('previous_question', 'Not available')}\n"
+            f"Candidate answer: {evidence.get('user_text', '')}\n"
+            f"Delivery notes: {pace_note}"
+        )
+        
         messages = [
             {
                 "role": "system",
                 "content": (
                     "You are an interview scoring assistant. Score using only the provided evidence and job description. "
+                    "Evaluate against the specific competencies listed. Focus on technical accuracy, clarity, and relevance. "
                     "Do not invent missing facts."
                 ),
             },
             {"role": "system", "content": schema_prompt},
-            {"role": "user", "content": json.dumps(evidence)},
+            {"role": "user", "content": context},
         ]
 
         bounded = self._bounded_messages(messages, settings.SCORING_CONTEXT_MESSAGES)
@@ -532,6 +574,7 @@ class InterviewEngine:
             repetition_penalty=settings.SCORING_REPETITION_PENALTY,
             max_tokens=settings.SCORING_MAX_NEW_TOKENS,
             model=model_name,
+            use_scoring_lock=True,  # Use separate lock to avoid blocking live interviews
         )
 
         parsed = self._safe_parse_json_object(raw)

@@ -21,3 +21,6 @@ pydantic-settings==2.2.1  # Settings management
 redis[hiredis]==5.0.3  # Fast session caching
 aiosqlite==0.20.0  # Async SQLite operations
 
+# GPU-accelerated speech recognition (Phase 2 upgrade)
+faster-whisper==1.0.3  # CTranslate2-based Whisper inference
+

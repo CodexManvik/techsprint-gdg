@@ -1,5 +1,8 @@
 import numpy as np
 from collections import deque
+import logging
+
+logger = logging.getLogger(__name__)
 
 class VisionEngine:
     def __init__(self):
@@ -7,7 +10,28 @@ class VisionEngine:
         self.nose_history = deque(maxlen=20)
         
         # We need a slightly longer history to detect slow gestures like nodding
-        self.gesture_history = deque(maxlen=30) 
+        self.gesture_history = deque(maxlen=30)
+        
+        # Eye contact calibration baseline (set during session start)
+        self.eye_contact_baseline: float | None = None
+        self._calibration_samples: list[float] = []
+
+    def calibrate(self, iris_center_ratio: float):
+        """
+        Collect iris position samples for calibration.
+        
+        Call this for ~3 seconds of frames at session start while user looks at camera.
+        After ~45 frames (3s at 15fps), baseline is computed automatically.
+        
+        Args:
+            iris_center_ratio: Current raw iris position ratio (eye_center_dist / eye_width)
+        """
+        self._calibration_samples.append(iris_center_ratio)
+        if len(self._calibration_samples) >= 45:  # ~3s at 15fps
+            self.eye_contact_baseline = sum(self._calibration_samples) / len(self._calibration_samples)
+            logger.info("Eye contact baseline calibrated: %.3f", self.eye_contact_baseline)
+            return True  # Calibration complete
+        return False  # Still calibrating
 
     def get_distance(self, p1, p2):
         """Euclidean distance between two landmarks."""
@@ -53,7 +77,7 @@ class VisionEngine:
             return getattr(lm, axis)
 
         try:
-            # --- 1. Eye Contact Analysis (Existing) ---
+            # --- 1. Eye Contact Analysis with Calibration ---
             left_inner_x = get_coord(landmarks[33], 'x')
             left_outer_x = get_coord(landmarks[133], 'x')
             eye_width = abs(left_inner_x - left_outer_x)
@@ -61,9 +85,17 @@ class VisionEngine:
 
             left_iris_x = get_coord(landmarks[468], 'x')
             eye_center_dist = abs(left_iris_x - ((left_inner_x + left_outer_x) / 2))
-            eye_contact_score = float(round(max(0, 1.0 - (eye_center_dist / eye_width)), 2))
+            raw_ratio = eye_center_dist / eye_width
+            
+            # Use calibrated baseline if available, otherwise use geometric center
+            if self.eye_contact_baseline is not None:
+                deviation = abs(raw_ratio - self.eye_contact_baseline)
+                eye_contact_score = float(round(max(0.0, 1.0 - (deviation * 2.0)), 2))
+            else:
+                # Fallback to old method if not calibrated
+                eye_contact_score = float(round(max(0, 1.0 - raw_ratio), 2))
 
-            # --- 2. Fidget Score & Gesture Tracking ---
+            # --- 2. Fidget Score with IQR (Interquartile Range) ---
             nose = landmarks[1]
             nose_x, nose_y = get_coord(nose, 'x'), get_coord(nose, 'y')
             
@@ -71,14 +103,15 @@ class VisionEngine:
             self.gesture_history.append((nose_x, nose_y))
             
             fidget_score = 0.0
-            if len(self.nose_history) > 5:
-                # Calculate standard deviation of movement (jitter)
-                std_dev = np.std([p[0] for p in self.nose_history])
-                fidget_score = float(round(std_dev * 100, 2))
+            if len(self.nose_history) >= 10:
+                # Use IQR instead of std_dev to ignore outliers (fast head turns)
+                positions = [p[0] for p in self.nose_history]
+                q75, q25 = np.percentile(positions, [75, 25])
+                fidget_score = float(round((q75 - q25) * 100, 2))
 
             head_gesture = self.detect_head_gesture()
 
-            # --- 3. Stress Proxy (Brow Distance) (Existing) ---
+            # --- 3. Stress Proxy (Brow Distance) ---
             brow_dist = self.get_distance(landmarks[55], landmarks[285])
             is_stressed = bool(brow_dist < 0.05) # Furrowed brows
 
@@ -92,12 +125,20 @@ class VisionEngine:
             # Normal resting ratio is usually around 0.35 - 0.45
             smile_ratio = mouth_width / face_width if face_width > 0 else 0
             is_smiling = bool(smile_ratio > 0.55) # Threshold for a smile
+            
+            # --- 5. Speaking Confidence Proxy (Mouth Movement) ---
+            # Measure mouth openness to detect talking activity
+            mouth_openness = self.get_distance(landmarks[13], landmarks[14])  # upper/lower lip
+            face_height = self.get_distance(landmarks[10], landmarks[152])    # forehead to chin
+            mouth_open_ratio = mouth_openness / face_height if face_height > 0 else 0
+            is_talking = bool(mouth_open_ratio > 0.03)  # Threshold for active speech
 
             return {
                 "eye_contact_score": eye_contact_score,
                 "fidget_score": fidget_score,
                 "head_gesture": head_gesture, # "nodding", "shaking", "neutral"
                 "is_smiling": is_smiling,
+                "is_talking": is_talking,  # New metric for speech activity detection
                 "stress_detected": is_stressed,
                 "is_stressed": bool(is_stressed or eye_contact_score < 0.4)
             }
@@ -110,5 +151,6 @@ class VisionEngine:
                 "fidget_score": 0.0, 
                 "head_gesture": "neutral",
                 "is_smiling": False,
+                "is_talking": False,
                 "is_stressed": False
             }

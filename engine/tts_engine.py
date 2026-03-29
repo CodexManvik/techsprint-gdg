@@ -6,15 +6,17 @@ import base64
 import io
 import logging
 import pyttsx3
+import threading
 
 
 logger = logging.getLogger(__name__)
 
 class TTSEngine:
     def __init__(self):
-        """Initialize local TTS engine"""
+        """Initialize local TTS engine with thread safety"""
         self.engine = pyttsx3.init()
         self.current_persona = "default"
+        self.lock = threading.Lock()  # Phase 5: Thread-safe access to pyttsx3
         
         # Configure voice properties
         self.engine.setProperty('rate', 160)  # Speed
@@ -48,32 +50,35 @@ class TTSEngine:
         """
         Generate audio from text using local TTS.
         Returns base64-encoded WAV audio.
+        
+        Thread-safe: pyttsx3 is not thread-safe, so we use a lock.
         """
-        try:
-            # Create a BytesIO buffer
-            buffer = io.BytesIO()
-            
-            # Save to buffer (pyttsx3 saves to file, so we use temp file)
-            import tempfile
-            import os
-            
-            with tempfile.NamedTemporaryFile(delete=False, suffix='.wav') as tmp:
-                tmp_path = tmp.name
-            
-            # Generate speech to file
-            self.engine.save_to_file(text, tmp_path)
-            self.engine.runAndWait()
-            
-            # Read the file and convert to base64
-            with open(tmp_path, 'rb') as audio_file:
-                audio_data = audio_file.read()
-            
-            # Cleanup temp file
-            os.remove(tmp_path)
-            
-            # Return base64 encoded audio
-            return base64.b64encode(audio_data).decode('utf-8')
-            
-        except Exception as e:
-            logger.error("Local TTS generation failed: %s", e)
-            return None
+        with self.lock:  # Phase 5: Prevent concurrent TTS calls from crashing
+            try:
+                # Create a BytesIO buffer
+                buffer = io.BytesIO()
+                
+                # Save to buffer (pyttsx3 saves to file, so we use temp file)
+                import tempfile
+                import os
+                
+                with tempfile.NamedTemporaryFile(delete=False, suffix='.wav') as tmp:
+                    tmp_path = tmp.name
+                
+                # Generate speech to file
+                self.engine.save_to_file(text, tmp_path)
+                self.engine.runAndWait()
+                
+                # Read the file and convert to base64
+                with open(tmp_path, 'rb') as audio_file:
+                    audio_data = audio_file.read()
+                
+                # Cleanup temp file
+                os.remove(tmp_path)
+                
+                # Return base64 encoded audio
+                return base64.b64encode(audio_data).decode('utf-8')
+                
+            except Exception as e:
+                logger.error("Local TTS generation failed: %s", e)
+                return None

@@ -7,7 +7,7 @@ from jose import JWTError, jwt
 from fastapi import HTTPException, status
 from fastapi import WebSocket
 
-from engine.auth import TokenData, ALGORITHM, SECRET_KEY
+from engine.auth import TokenData, ALGORITHM, get_secret_key
 
 
 def _extract_bearer_token(raw: str | None) -> str | None:
@@ -38,7 +38,7 @@ async def authenticate_websocket(websocket: WebSocket) -> TokenData:
         )
 
     try:
-        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+        payload = jwt.decode(token, get_secret_key(), algorithms=[ALGORITHM])
         user_id: str | None = payload.get("sub")
         email: str | None = payload.get("email")
         if not user_id:

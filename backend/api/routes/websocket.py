@@ -35,6 +35,18 @@ tts = TTSEngine()
 
 
 def _normalize_engine_history(messages: list[dict]) -> list[dict[str, str]]:
+    """
+    Normalize message history for InterviewEngine compatibility.
+    
+    Converts "ai" role to "assistant" and filters out "system" messages.
+    
+    IMPORTANT: System messages are intentionally dropped here because the InterviewEngine
+    rebuilds system prompts dynamically on reconnect. If the DB schema evolves to store
+    system messages that need preservation, this filter will silently drop them.
+    
+    Returns:
+        List of normalized messages with only "user" and "assistant" roles.
+    """
     normalized: list[dict[str, str]] = []
     for msg in messages or []:
         role = (msg or {}).get("role")
@@ -42,6 +54,7 @@ def _normalize_engine_history(messages: list[dict]) -> list[dict[str, str]]:
         if role == "ai":
             role = "assistant"
         if role not in {"user", "assistant"}:
+            # System messages are filtered out - see docstring above
             continue
         normalized.append({"role": role, "content": str(content)})
     return normalized
@@ -141,6 +154,8 @@ async def interview_websocket(
     # Session reconnect logic: Redis first, then DB
     async with sessions_lock:
         engine_history: list[dict[str, str]] = []
+        resume_text: str | None = None
+        
         if session_id not in legacy_sessions:
             cached_session = await redis_cache.get_session(session_id)
             if cached_session:
@@ -158,6 +173,7 @@ async def interview_websocket(
                     job_description=cached_session.get("job_description", ""),
                 )
                 engine_history = _normalize_engine_history(cached_session.get("history") or [])
+                resume_text = cached_session.get("resume_text")
                 logger.info("Restored session from Redis: %s", session_id)
             else:
                 db_session = await db.get_session(session_id)
@@ -171,6 +187,7 @@ async def interview_websocket(
                     )
                     db_messages = await db.get_messages(session_id)
                     engine_history = _normalize_engine_history(db_messages)
+                    resume_text = db_session.get("resume_text")  # Phase 4: Restore resume from DB
                     logger.info("Restored session from DB: %s", session_id)
                 else:
                     await _send_error(websocket, "session_not_found", "Session not found")
@@ -190,6 +207,7 @@ async def interview_websocket(
                 topic=current_session.topic,
                 job_description=current_session.job_description,
                 history=engine_history,
+                resume_context=resume_text,  # Phase 4: Pass resume to engine
             )
 
         active_connections[session_id] = active_connections.get(session_id, 0) + 1
@@ -287,9 +305,10 @@ async def interview_websocket(
                     continue
                 
                 try:
-                    # 1. Process Audio → Text
+                    # 1. Process Audio → Text (async to avoid blocking event loop)
                     audio_data = base64.b64decode(payload['audio_data'])
-                    analysis = audio_processor.process_audio(audio_data)
+                    loop = asyncio.get_event_loop()
+                    analysis = await loop.run_in_executor(None, audio_processor.process_audio, audio_data)
                     user_text = analysis['text']
                     
                     if analysis.get('error'):
@@ -368,7 +387,17 @@ async def interview_websocket(
                         "metrics": current_metrics or {},
                         "audio": {
                             "wpm": analysis.get("wpm"),
+                            "speech_ratio": analysis.get("speech_ratio"),  # New metric from faster-whisper
+                            "duration_seconds": analysis.get("duration_seconds"),
                             "error": analysis.get("error"),
+                        },
+                        # Phase 4: Enrich with competencies and turn context
+                        "expected_competencies": engine.session_state.get(session_id, {}).get("competencies", []),
+                        "turn_number": len(engine.sessions.get(session_id, [])) // 2,
+                        "speech_metrics": {
+                            "wpm": analysis.get("wpm"),
+                            "speech_ratio": analysis.get("speech_ratio"),
+                            "duration_seconds": analysis.get("duration_seconds"),
                         },
                         "timestamp": time.time(),
                     }
@@ -377,9 +406,10 @@ async def interview_websocket(
                     if scorer is not None:
                         await scorer.enqueue(evidence_payload)
                     
-                    # 6. Generate TTS audio
+                    # 6. Generate TTS audio (async to avoid blocking event loop)
                     logger.info("Generating TTS audio...")
-                    audio_b64 = tts.generate_audio(ai_reply)
+                    loop = asyncio.get_event_loop()
+                    audio_b64 = await loop.run_in_executor(None, tts.generate_audio, ai_reply)
                     
                     if audio_b64:
                         logger.info(f"Audio generated: {len(audio_b64)} chars (base64)")

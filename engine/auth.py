@@ -8,9 +8,19 @@ from pydantic import BaseModel
 from backend.config.settings import settings
 
 # Configuration
-SECRET_KEY = settings.JWT_SECRET
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 60 * 24 * 7  # 7 days
+
+
+def get_secret_key() -> str:
+    """
+    Get JWT secret at runtime instead of import time.
+    
+    This avoids fragile module-level capture of settings.JWT_SECRET
+    which breaks if engine.auth is imported before settings validator runs.
+    """
+    return settings.JWT_SECRET
+
 
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="auth/token")
@@ -37,7 +47,7 @@ class AuthEngine:
         else:
             expire = datetime.utcnow() + timedelta(minutes=15)
         to_encode.update({"exp": expire})
-        encoded_jwt = jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
+        encoded_jwt = jwt.encode(to_encode, get_secret_key(), algorithm=ALGORITHM)
         return encoded_jwt
 
     async def get_current_user(self, token: str = Depends(oauth2_scheme)):
@@ -47,7 +57,7 @@ class AuthEngine:
             headers={"WWW-Authenticate": "Bearer"},
         )
         try:
-            payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+            payload = jwt.decode(token, get_secret_key(), algorithms=[ALGORITHM])
             user_id: str = payload.get("sub")
             email: str = payload.get("email")
             if user_id is None:

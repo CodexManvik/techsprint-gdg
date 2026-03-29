@@ -64,6 +64,23 @@ async def lifespan(app: FastAPI):
     else:
         logger.warning("LLM connection check failed - circuit breaker will handle fallback")
     
+    # Phase 5: GPU memory logging for operational visibility
+    try:
+        import subprocess
+        result = subprocess.run(
+            ["nvidia-smi", "--query-gpu=memory.used,memory.free", "--format=csv,noheader,nounits"],
+            capture_output=True, text=True, timeout=3
+        )
+        if result.returncode == 0:
+            used, free = result.stdout.strip().split(", ")
+            logger.info("🎮 GPU memory: %sMB used, %sMB free", used, free)
+        else:
+            logger.info("GPU monitoring: nvidia-smi not available (CPU mode?)")
+    except FileNotFoundError:
+        logger.info("GPU monitoring: nvidia-smi not found (CPU mode)")
+    except Exception as e:
+        logger.debug("GPU monitoring failed: %s", e)
+    
     # 5. Create interview engine
     interview_engine = InterviewEngine(llm_client=llm_client)
     logger.info("Interview Engine initialized")

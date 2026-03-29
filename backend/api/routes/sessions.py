@@ -86,7 +86,7 @@ async def start_interview(
         job_description=req.job_description,
     )
     
-    # DB: Create session
+    # DB: Create session with resume
     await db.create_session(
         session_id,
         current_user.user_id,
@@ -94,6 +94,7 @@ async def start_interview(
         req.topic,
         req.difficulty,
         req.job_description,
+        req.resume_text,  # Phase 4: Persist resume text
     )
 
     # Cache initial session payload for websocket reconnect path
@@ -106,6 +107,7 @@ async def start_interview(
             "difficulty": req.difficulty,
             "topic": req.topic,
             "job_description": req.job_description,
+            "resume_text": req.resume_text,  # Phase 4: Cache resume for reconnect
             "history": [],
             "analytics": {},
         },
