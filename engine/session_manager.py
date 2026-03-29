@@ -38,9 +38,26 @@ class InterviewSession:
              self.history["wpm_scores"].append(audio_analysis["wpm"])
 
     def get_analytics(self):
-        """Returns raw data for the frontend to render graphs."""
+        """Return both summarized and raw analytics consumed by reports/charts."""
+        def _avg(values):
+            if not values:
+                return 0.0
+            return float(sum(values) / len(values))
+
+        avg_eye_contact = _avg(self.history["eye_contact_scores"])
+        avg_wpm = _avg(self.history["wpm_scores"])
+        avg_stress = _avg(self.history["stress_flags"])
+
+        # Approximate posture confidence from inverse fidget score on a 0..1 scale.
+        posture_samples = [max(0.0, min(1.0, 1.0 - (float(v) / 10.0))) for v in self.history["fidget_scores"]]
+        posture_avg = _avg(posture_samples)
+
         return {
             "duration": round(time.time() - self.start_time),
+            "avg_wpm": avg_wpm,
+            "avg_eye_contact": avg_eye_contact,
+            "posture_avg": posture_avg,
+            "avg_stress": avg_stress,
             "history": self.history,
             "transcript_text": "\n".join([f"{t['role'].upper()}: {t['content']}" for t in self.transcript])
         }

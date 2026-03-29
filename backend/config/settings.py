@@ -65,6 +65,12 @@ class Settings(BaseSettings):
     JWT_ALGORITHM: str = "HS256"
     JWT_EXPIRE_MINUTES: int = 1440  # 24 hours
     WS_AUTH_REQUIRED: bool = True
+    MAX_USER_INPUT_CHARS: int = 4000
+    WS_HEARTBEAT_INTERVAL_SEC: int = 25
+    WS_HEARTBEAT_TIMEOUT_SEC: int = 120
+    AUTH_RATE_LIMIT_WINDOW_SEC: int = 60
+    AUTH_LOGIN_RATE_LIMIT: int = 10
+    AUTH_REGISTER_RATE_LIMIT: int = 5
     
     # ===== Application =====
     ENV: Literal["development", "production"] = "development"
@@ -125,6 +131,15 @@ class Settings(BaseSettings):
         self.MAX_EYE_CONTACT_REMINDERS = max(1, min(self.MAX_EYE_CONTACT_REMINDERS, 10))
         self.REMINDER_COOLDOWN_SEC = max(15, min(self.REMINDER_COOLDOWN_SEC, 600))
         self.SCORING_QUEUE_MAXSIZE = max(10, min(self.SCORING_QUEUE_MAXSIZE, 10000))
+        self.MAX_USER_INPUT_CHARS = max(128, min(self.MAX_USER_INPUT_CHARS, 20000))
+        self.WS_HEARTBEAT_INTERVAL_SEC = max(5, min(self.WS_HEARTBEAT_INTERVAL_SEC, 300))
+        self.WS_HEARTBEAT_TIMEOUT_SEC = max(
+            self.WS_HEARTBEAT_INTERVAL_SEC,
+            min(self.WS_HEARTBEAT_TIMEOUT_SEC, 1800),
+        )
+        self.AUTH_RATE_LIMIT_WINDOW_SEC = max(10, min(self.AUTH_RATE_LIMIT_WINDOW_SEC, 3600))
+        self.AUTH_LOGIN_RATE_LIMIT = max(1, min(self.AUTH_LOGIN_RATE_LIMIT, 200))
+        self.AUTH_REGISTER_RATE_LIMIT = max(1, min(self.AUTH_REGISTER_RATE_LIMIT, 100))
         
         return self
 

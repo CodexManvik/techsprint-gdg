@@ -391,6 +391,48 @@ class InterviewEngine:
 
         return formatted
 
+    async def restore_session_state(
+        self,
+        session_id: str,
+        persona: str,
+        difficulty: str,
+        topic: str,
+        job_description: Optional[str] = None,
+        history: Optional[list[dict[str, str]]] = None,
+    ) -> None:
+        """Restore session history/state for reconnect paths after process restart."""
+        safe_history = history or []
+        normalized_history: list[dict[str, str]] = []
+
+        for message in safe_history:
+            role = (message or {}).get("role")
+            content = (message or {}).get("content", "")
+            if role not in {"user", "assistant"}:
+                continue
+            normalized_history.append({"role": role, "content": str(content)})
+
+        competencies = self._extract_competencies(topic, job_description)
+        system_prompt = self._build_system_prompt(
+            persona,
+            difficulty,
+            topic,
+            job_description,
+            competencies,
+            resume_context=None,
+            custom_instructions=None,
+        )
+
+        async with self.sessions_lock:
+            self.sessions[session_id] = [{"role": "system", "content": system_prompt}] + normalized_history
+            self.session_state[session_id] = {
+                "topic": topic,
+                "job_description": job_description or "",
+                "competencies": competencies,
+                "eye_contact_reminders": 0,
+                "last_reminder_ts": 0.0,
+                "rolling_summary": self._make_summary(self.sessions[session_id]),
+            }
+
     async def process_turn(self, session_id: str, user_input: str, metrics: Optional[dict] = None) -> str:
         """Process a single interview turn."""
         async with self.sessions_lock:

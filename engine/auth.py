@@ -1,14 +1,14 @@
 from datetime import datetime, timedelta
-import os
 from typing import Optional
 from jose import JWTError, jwt
 from passlib.context import CryptContext
 from fastapi import Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordBearer
 from pydantic import BaseModel
+from backend.config.settings import settings
 
 # Configuration
-SECRET_KEY = os.getenv("JWT_SECRET", "super_secret_dev_key_12345")
+SECRET_KEY = settings.JWT_SECRET
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 60 * 24 * 7  # 7 days
 

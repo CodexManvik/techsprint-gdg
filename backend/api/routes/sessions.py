@@ -16,6 +16,7 @@ from engine.tts_engine import TTSEngine
 from backend.db.repository import get_db, DatabaseRepository
 from backend.core.interview.engine import InterviewEngine
 from backend.core.cache import redis_cache
+from backend.core.session_store import legacy_sessions
 from pypdf import PdfReader
 import io
 import uuid
@@ -26,7 +27,6 @@ logger = logging.getLogger(__name__)
 # Global instances (TODO: Move to dependency injection)
 auth_engine = AuthEngine()
 tts = TTSEngine()
-sessions = {}  # In-memory fallback
 
 
 class StartSessionRequest(BaseModel):
@@ -78,7 +78,7 @@ async def start_interview(
     )
     
     # Create legacy session for compatibility
-    sessions[session_id] = InterviewSession(
+    legacy_sessions[session_id] = InterviewSession(
         session_id,
         company_focus=req.persona,
         difficulty=req.difficulty,
@@ -201,8 +201,8 @@ async def check_session(
         return {"valid": True, "details": {"topic": cached.get("topic"), "persona": cached.get("persona")}}
     
     # Check in-memory for richer details when available
-    if session_id in sessions:
-        session_obj = sessions[session_id]
+    if session_id in legacy_sessions:
+        session_obj = legacy_sessions[session_id]
         return {
             "valid": True,
             "details": {
@@ -287,7 +287,7 @@ async def get_report(
         raise HTTPException(status_code=403, detail="Access denied: You do not own this session")
     
     # Get analytics from memory or DB
-    session = sessions.get(session_id)
+    session = legacy_sessions.get(session_id)
     analytics = session.get_analytics() if session else {}
     
     if not analytics and db_session.get('analytics'):

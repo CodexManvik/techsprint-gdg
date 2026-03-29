@@ -9,12 +9,13 @@ import asyncio
 import time
 import logging
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect, Depends, HTTPException
-from backend.core.interview.engine import InterviewEngine
+from backend.core.interview.engine import InterviewEngine, SessionNotFoundError
 from backend.core.interview.scorer import TurnScoringService
 from backend.core.interview.analyzer import CheatingDetector
 from backend.core.cache import redis_cache
 from backend.db.repository import db_repository
 from backend.config.settings import settings
+from backend.core.session_store import legacy_sessions, sessions_lock, active_connections
 from backend.core.security.ws_auth import authenticate_websocket
 from engine.auth import TokenData
 
@@ -31,9 +32,19 @@ logger = logging.getLogger(__name__)
 vision = VisionEngine()
 audio_processor = AudioEngine()
 tts = TTSEngine()
-sessions = {}  # In-memory fallback (Redis preferred)
-sessions_lock = asyncio.Lock()  # Protect concurrent access to sessions dict
-active_connections: dict[str, int] = {}
+
+
+def _normalize_engine_history(messages: list[dict]) -> list[dict[str, str]]:
+    normalized: list[dict[str, str]] = []
+    for msg in messages or []:
+        role = (msg or {}).get("role")
+        content = (msg or {}).get("content", "")
+        if role == "ai":
+            role = "assistant"
+        if role not in {"user", "assistant"}:
+            continue
+        normalized.append({"role": role, "content": str(content)})
+    return normalized
 
 
 async def _send_error(websocket: WebSocket, code: str, message: str):
@@ -115,6 +126,10 @@ async def interview_websocket(
         return
 
     if current_user is not None:
+        if current_user.user_id is None:
+            await _send_error(websocket, "unauthorized", "Invalid authentication token")
+            await websocket.close(code=1008)
+            return
         if not await db.session_belongs_to_user(session_id, current_user.user_id):
             session_exists = await db.get_session(session_id)
             code = "forbidden" if session_exists else "session_not_found"
@@ -125,7 +140,8 @@ async def interview_websocket(
 
     # Session reconnect logic: Redis first, then DB
     async with sessions_lock:
-        if session_id not in sessions:
+        engine_history: list[dict[str, str]] = []
+        if session_id not in legacy_sessions:
             cached_session = await redis_cache.get_session(session_id)
             if cached_session:
                 cached_user = cached_session.get("user_id")
@@ -134,24 +150,27 @@ async def interview_websocket(
                     await websocket.close(code=1008)
                     return
 
-                sessions[session_id] = InterviewSession(
+                legacy_sessions[session_id] = InterviewSession(
                     session_id,
                     company_focus=cached_session.get("persona", "General"),
                     difficulty=cached_session.get("difficulty", "Medium"),
                     topic=cached_session.get("topic", "General"),
                     job_description=cached_session.get("job_description", ""),
                 )
+                engine_history = _normalize_engine_history(cached_session.get("history") or [])
                 logger.info("Restored session from Redis: %s", session_id)
             else:
                 db_session = await db.get_session(session_id)
                 if db_session:
-                    sessions[session_id] = InterviewSession(
+                    legacy_sessions[session_id] = InterviewSession(
                         session_id,
                         company_focus=db_session.get("persona", "General"),
                         difficulty=db_session.get("difficulty", "Medium"),
                         topic=db_session.get("topic", "General"),
                         job_description=db_session.get("job_description", ""),
                     )
+                    db_messages = await db.get_messages(session_id)
+                    engine_history = _normalize_engine_history(db_messages)
                     logger.info("Restored session from DB: %s", session_id)
                 else:
                     await _send_error(websocket, "session_not_found", "Session not found")
@@ -160,8 +179,20 @@ async def interview_websocket(
         else:
             logger.info("Reconnecting to existing session: %s", session_id)
 
+        current_session = legacy_sessions[session_id]
+
+        # Ensure InterviewEngine has runtime state restored before processing turns.
+        if session_id not in engine.sessions:
+            await engine.restore_session_state(
+                session_id=session_id,
+                persona=current_session.company_focus,
+                difficulty=current_session.difficulty,
+                topic=current_session.topic,
+                job_description=current_session.job_description,
+                history=engine_history,
+            )
+
         active_connections[session_id] = active_connections.get(session_id, 0) + 1
-        current_session = sessions[session_id]
 
     await websocket.send_text(
         json.dumps(
@@ -173,8 +204,30 @@ async def interview_websocket(
     )
 
     try:
+        last_client_activity = time.monotonic()
+        heartbeat_interval = float(settings.WS_HEARTBEAT_INTERVAL_SEC)
+        heartbeat_timeout = float(settings.WS_HEARTBEAT_TIMEOUT_SEC)
+
         while True:
-            data = await websocket.receive_text()
+            try:
+                data = await asyncio.wait_for(websocket.receive_text(), timeout=heartbeat_interval)
+                last_client_activity = time.monotonic()
+            except asyncio.TimeoutError:
+                idle_seconds = time.monotonic() - last_client_activity
+                if idle_seconds >= heartbeat_timeout:
+                    await _send_error(websocket, "heartbeat_timeout", "WebSocket heartbeat timeout")
+                    await websocket.close(code=1001)
+                    break
+
+                await websocket.send_text(
+                    json.dumps(
+                        {
+                            "type": "ping",
+                            "timestamp": int(time.time()),
+                        }
+                    )
+                )
+                continue
             
             # Parse JSON with error handling
             try:
@@ -182,6 +235,14 @@ async def interview_websocket(
             except json.JSONDecodeError as e:
                 logger.error(f"JSON parse error: {e}")
                 await _send_error(websocket, "invalid_json", "Invalid JSON format")
+                continue
+
+            if payload.get("type") == "pong":
+                last_client_activity = time.monotonic()
+                continue
+
+            if payload.get("type") == "ping":
+                await websocket.send_text(json.dumps({"type": "pong", "timestamp": int(time.time())}))
                 continue
             
             # --- VISION TRACKING ---
@@ -237,6 +298,14 @@ async def interview_websocket(
                     if not user_text:
                         await _send_error(websocket, "empty_transcript", "I didn't catch that. Could you speak up?")
                         continue
+
+                    if len(user_text) > settings.MAX_USER_INPUT_CHARS:
+                        await _send_error(
+                            websocket,
+                            "input_too_long",
+                            f"Maximum input length is {settings.MAX_USER_INPUT_CHARS} characters",
+                        )
+                        continue
                     
                     # Redact PII from logs - log only metadata
                     logger.info(f"User message length: {len(user_text)} chars")
@@ -254,11 +323,26 @@ async def interview_websocket(
                             prior_question = msg.get("content", "")
                             break
 
-                    ai_reply = await engine.process_turn(
-                        session_id=session_id,
-                        user_input=user_text,
-                        metrics=current_metrics
-                    )
+                    try:
+                        ai_reply = await engine.process_turn(
+                            session_id=session_id,
+                            user_input=user_text,
+                            metrics=current_metrics
+                        )
+                    except SessionNotFoundError:
+                        await engine.restore_session_state(
+                            session_id=session_id,
+                            persona=current_session.company_focus,
+                            difficulty=current_session.difficulty,
+                            topic=current_session.topic,
+                            job_description=current_session.job_description,
+                            history=_normalize_engine_history(await db.get_messages(session_id)),
+                        )
+                        ai_reply = await engine.process_turn(
+                            session_id=session_id,
+                            user_input=user_text,
+                            metrics=current_metrics
+                        )
                     
                     # Redact PII from logs - log only length
                     logger.info(f"AI reply length: {len(ai_reply)} chars")
@@ -340,7 +424,7 @@ async def interview_websocket(
             current_count = active_connections.get(session_id, 0)
             if current_count <= 1:
                 active_connections.pop(session_id, None)
-                sessions.pop(session_id, None)
+                legacy_sessions.pop(session_id, None)
                 logger.info("Cleaned up in-memory session (last socket): %s", session_id)
             else:
                 active_connections[session_id] = current_count - 1
@@ -360,7 +444,7 @@ async def interview_websocket(
             current_count = active_connections.get(session_id, 0)
             if current_count <= 1:
                 active_connections.pop(session_id, None)
-                sessions.pop(session_id, None)
+                legacy_sessions.pop(session_id, None)
                 logger.info("Cleaned up session after error: %s", session_id)
             else:
                 active_connections[session_id] = current_count - 1

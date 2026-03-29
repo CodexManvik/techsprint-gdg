@@ -20,8 +20,25 @@ class AudioEngine:
         Process audio bytes and return transcription using local speech recognition.
         
         Returns:
-            dict: {"text": str, "error": str|None}
+            dict: {"text": str, "wpm": int|None, "duration_seconds": float, "error": str|None}
         """
+        duration_seconds = len(audio_bytes) / float(16000 * 2) if audio_bytes else 0.0
+
+        def _with_metrics(text: str, error: str | None):
+            words = len(text.split()) if text else 0
+            if words > 0 and duration_seconds > 0:
+                wpm = int(round((words / duration_seconds) * 60.0))
+                # Keep obvious outliers from skewing analytics on tiny/invalid clips.
+                wpm = max(0, min(wpm, 300))
+            else:
+                wpm = None
+            return {
+                "text": text,
+                "wpm": wpm,
+                "duration_seconds": round(duration_seconds, 3),
+                "error": error,
+            }
+
         try:
             # Convert bytes to AudioData
             audio_data = sr.AudioData(audio_bytes, sample_rate=16000, sample_width=2)
@@ -31,21 +48,21 @@ class AudioEngine:
             try:
                 # Try offline recognition first (requires pocketsphinx)
                 text = self.recognizer.recognize_sphinx(audio_data)
-                return {"text": text, "error": None}
+                return _with_metrics(text, None)
             except sr.UnknownValueError:
-                return {"text": "", "error": "Could not understand audio"}
+                return _with_metrics("", "Could not understand audio")
             except sr.RequestError:
                 # Sphinx not available, try Whisper or fallback
                 try:
                     # Try using recognize_whisper if available
                     text = self.recognizer.recognize_whisper(audio_data, model="base")
-                    return {"text": text, "error": None}
+                    return _with_metrics(text, None)
                 except Exception:
-                    return {"text": "", "error": "Speech recognition not available"}
+                    return _with_metrics("", "Speech recognition not available")
         
         except Exception as e:
             logger.error("Audio processing error: %s", e)
-            return {"text": "", "error": str(e)}
+            return _with_metrics("", str(e))
     
     def analyze_audio_quality(self, audio_bytes):
         """Analyze audio quality metrics (placeholder)"""
