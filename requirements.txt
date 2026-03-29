@@ -24,3 +24,28 @@ aiosqlite==0.20.0  # Async SQLite operations
 # GPU-accelerated speech recognition (Phase 2 upgrade)
 faster-whisper==1.0.3  # CTranslate2-based Whisper inference
 
+# Performance upgrades (Phase 6)
+uvloop>=0.21.0  # Drop-in event loop replacement (2x WebSocket throughput)
+orjson>=3.10.0  # Fast JSON serialization (2-10x faster than stdlib)
+
+# TTS replacement (Phase 6)
+kokoro>=0.9.4  # Fast neural TTS (82M params, <0.3s generation)
+soundfile>=0.12.1  # Audio file I/O for Kokoro
+
+# Emotion analysis (Phase 6)
+deepface>=0.0.93  # Emotion classification
+
+# Structured logging (Phase 6)
+structlog>=24.0.0  # JSON logs with context
+
+# Testing infrastructure (Phase 6)
+pytest>=8.0.0
+pytest-asyncio>=0.24.0
+anyio>=4.0.0
+
+# Monitoring (Phase 6)
+prometheus-fastapi-instrumentator>=7.0.0
+
+# Code quality
+ruff>=0.6.0
+

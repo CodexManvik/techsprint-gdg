@@ -11,6 +11,19 @@ import logging
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+# Install uvloop for 2x WebSocket throughput boost
+try:
+    import uvloop
+    uvloop.install()
+    logging.info("uvloop installed - asyncio event loop replaced with libuv")
+except ImportError:
+    logging.info("uvloop not available - using default asyncio event loop")
+
+# Setup structured logging
+from backend.core.logging_config import setup_structured_logging, get_logger
+logger = setup_structured_logging()
+logger = get_logger(__name__)
+
 from backend.config.settings import settings
 from backend.core.cache import redis_cache
 from backend.core.llm.ollama import OllamaClient
@@ -19,8 +32,6 @@ from backend.core.interview.scorer import TurnScoringService
 from backend.db.repository import init_db, close_db, get_db
 from backend.core.telemetry.metrics import metrics
 
-
-logger = logging.getLogger(__name__)
 
 # Global instances (initialized in lifespan)
 interview_engine: InterviewEngine = None
@@ -138,6 +149,14 @@ def create_app() -> FastAPI:
         allow_methods=["*"],
         allow_headers=["*"],
     )
+    
+    # Add Prometheus metrics instrumentation
+    try:
+        from prometheus_fastapi_instrumentator import Instrumentator
+        Instrumentator().instrument(app).expose(app)
+        logger.info("Prometheus metrics enabled at /metrics")
+    except ImportError:
+        logger.warning("prometheus-fastapi-instrumentator not installed")
     
     # Health check endpoint
     @app.get("/")

@@ -3,12 +3,24 @@ WebSocket Routes for Real-Time Interview Sessions
 
 Handles video tracking, audio processing, and LLM conversation flow.
 """
-import json
 import base64
 import asyncio
 import time
 import logging
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect, Depends, HTTPException
+
+# Use orjson for 2-10x faster JSON serialization (handles numpy natively)
+try:
+    import orjson
+    def json_dumps(obj):
+        return orjson.dumps(obj).decode()
+    def json_loads(data):
+        return orjson.loads(data)
+except ImportError:
+    import json
+    json_dumps = json.dumps
+    json_loads = json.loads
+
 from backend.core.interview.engine import InterviewEngine, SessionNotFoundError
 from backend.core.interview.scorer import TurnScoringService
 from backend.core.interview.analyzer import CheatingDetector
@@ -62,7 +74,7 @@ def _normalize_engine_history(messages: list[dict]) -> list[dict[str, str]]:
 
 async def _send_error(websocket: WebSocket, code: str, message: str):
     await websocket.send_text(
-        json.dumps(
+        json_dumps(
             {
                 "type": "error",
                 "code": code,
@@ -213,7 +225,7 @@ async def interview_websocket(
         active_connections[session_id] = active_connections.get(session_id, 0) + 1
 
     await websocket.send_text(
-        json.dumps(
+        json_dumps(
             {
                 "type": "connected",
                 "session_id": session_id,
@@ -238,7 +250,7 @@ async def interview_websocket(
                     break
 
                 await websocket.send_text(
-                    json.dumps(
+                    json_dumps(
                         {
                             "type": "ping",
                             "timestamp": int(time.time()),
@@ -249,8 +261,8 @@ async def interview_websocket(
             
             # Parse JSON with error handling
             try:
-                payload = json.loads(data)
-            except json.JSONDecodeError as e:
+                payload = json_loads(data)
+            except Exception as e:
                 logger.error(f"JSON parse error: {e}")
                 await _send_error(websocket, "invalid_json", "Invalid JSON format")
                 continue
@@ -260,7 +272,30 @@ async def interview_websocket(
                 continue
 
             if payload.get("type") == "ping":
-                await websocket.send_text(json.dumps({"type": "pong", "timestamp": int(time.time())}))
+                await websocket.send_text(json_dumps({"type": "pong", "timestamp": int(time.time())}))
+                continue
+            
+            # --- CALIBRATION (Eye Contact Baseline) ---
+            elif payload.get("type") == "calibrate":
+                if 'landmarks' not in payload or not payload.get('landmarks'):
+                    continue
+                try:
+                    # Extract iris ratio for calibration
+                    landmarks = payload['landmarks']
+                    left_inner_x = landmarks[33]['x']
+                    left_outer_x = landmarks[133]['x']
+                    eye_width = abs(left_inner_x - left_outer_x) or 0.1
+                    left_iris_x = landmarks[468]['x']
+                    raw_ratio = abs(left_iris_x - ((left_inner_x + left_outer_x) / 2)) / eye_width
+                    
+                    complete = vision.calibrate(raw_ratio)
+                    await websocket.send_text(json_dumps({
+                        "type": "calibration_progress",
+                        "complete": complete,
+                        "samples": len(vision._calibration_samples)
+                    }))
+                except Exception:
+                    logger.exception("Calibration error for session %s", session_id)
                 continue
             
             # --- VISION TRACKING ---
@@ -289,7 +324,7 @@ async def interview_websocket(
                         response["alert"] = violation["alert"]
                         response["severity"] = violation["severity"]
                     
-                    await websocket.send_text(json.dumps(response))
+                    await websocket.send_text(json_dumps(response))
                     
                 except Exception as e:
                     logger.exception("Vision processing error for session %s", session_id)
@@ -417,7 +452,7 @@ async def interview_websocket(
                         logger.warning("Audio generation returned None")
                     
                     # 7. Send response
-                    await websocket.send_text(json.dumps({
+                    await websocket.send_text(json_dumps({
                         "type": "ai_response",
                         "reply": ai_reply,
                         "transcript": user_text,

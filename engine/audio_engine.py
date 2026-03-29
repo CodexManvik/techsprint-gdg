@@ -14,7 +14,7 @@ logger = logging.getLogger(__name__)
 class AudioEngine:
     def __init__(self, model_size: str = "base", device: str = "cuda", compute_type: str = "float16"):
         """
-        Initialize faster-whisper audio engine.
+        Initialize faster-whisper audio engine with graceful degradation.
         
         Args:
             model_size: Model size - "tiny" (~1GB VRAM), "base" (~1.5GB, recommended), 
@@ -22,23 +22,31 @@ class AudioEngine:
             device: "cuda" for GPU, "cpu" for fallback
             compute_type: "float16" for GPU, "int8" for CPU
         """
+        self.model = None
+        self._model_size = model_size
+        self._device = device
+        self._compute_type = compute_type
+        self._load_model()
+
+    def _load_model(self):
+        """Attempt to load faster-whisper with graceful fallback."""
         try:
             from faster_whisper import WhisperModel
-            self.model = WhisperModel(model_size, device=device, compute_type=compute_type)
+            self.model = WhisperModel(self._model_size, device=self._device, compute_type=self._compute_type)
             logger.info("faster-whisper initialized: model=%s device=%s compute=%s", 
-                       model_size, device, compute_type)
+                       self._model_size, self._device, self._compute_type)
         except ImportError:
             logger.error("faster-whisper not installed. Run: pip install faster-whisper")
-            raise
+            logger.warning("Audio transcription will not be available until package is installed")
         except Exception as e:
             logger.warning("GPU init failed (%s), falling back to CPU", e)
             try:
                 from faster_whisper import WhisperModel
-                self.model = WhisperModel(model_size, device="cpu", compute_type="int8")
+                self.model = WhisperModel(self._model_size, device="cpu", compute_type="int8")
                 logger.info("faster-whisper initialized on CPU (fallback)")
             except Exception as e2:
                 logger.error("Failed to initialize faster-whisper: %s", e2)
-                raise
+                logger.warning("Audio transcription will not be available")
 
     def process_audio(self, audio_bytes: bytes) -> Dict[str, any]:
         """
@@ -55,6 +63,15 @@ class AudioEngine:
                 "error": str | None - Error message if transcription failed
             }
         """
+        if self.model is None:
+            return {
+                "text": "",
+                "wpm": None,
+                "duration_seconds": 0.0,
+                "speech_ratio": 0.0,
+                "error": "Audio engine not initialized. Install faster-whisper: pip install faster-whisper"
+            }
+
         if not audio_bytes:
             return {
                 "text": "",

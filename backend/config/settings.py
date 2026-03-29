@@ -21,7 +21,7 @@ class Settings(BaseSettings):
     OLLAMA_BASE_URL: str = "http://localhost:11434"
     OLLAMA_MODEL: str = "qwen3.5:4b"
     OLLAMA_SCORING_MODEL: str | None = None
-    LLM_TIMEOUT: float = 5.0
+    LLM_TIMEOUT: float = 30.0  # Increased from 5.0 for GPU contention with Whisper
     LLM_MAX_RETRIES: int = 2
     LLM_STREAM_ENABLED: bool = True
     LLM_TEMPERATURE: float = 0.5

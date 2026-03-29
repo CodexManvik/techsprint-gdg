@@ -1,6 +1,8 @@
 import numpy as np
 from collections import deque
 import logging
+import base64
+import io
 
 logger = logging.getLogger(__name__)
 
@@ -15,6 +17,22 @@ class VisionEngine:
         # Eye contact calibration baseline (set during session start)
         self.eye_contact_baseline: float | None = None
         self._calibration_samples: list[float] = []
+        
+        # Emotion detection using deepface
+        self.deepface_model = None
+        self._load_emotion_model()
+
+    def _load_emotion_model(self):
+        """Load deepface emotion model with graceful fallback."""
+        try:
+            from deepface import DeepFace
+            self.deepface_model = DeepFace
+            logger.info("DeepFace emotion model loaded")
+        except ImportError:
+            logger.warning("deepface not installed. Run: pip install deepface")
+            logger.info("Emotion detection will use brow-distance heuristic fallback")
+        except Exception as e:
+            logger.error("Failed to load deepface: %s", e)
 
     def calibrate(self, iris_center_ratio: float):
         """
@@ -111,11 +129,19 @@ class VisionEngine:
 
             head_gesture = self.detect_head_gesture()
 
-            # --- 3. Stress Proxy (Brow Distance) ---
+            # --- 3. Emotion Detection using DeepFace (if available) ---
+            emotion = "neutral"  # Default fallback
+            if self.deepface_model is not None:
+                # Note: DeepFace requires actual image frame, not just landmarks
+                # This would need the frame_base64 to be passed to analyze_frame()
+                # For now, we'll use the brow-based stress proxy as fallback
+                pass
+            
+            # --- 4. Stress Proxy (Brow Distance) - Fallback when DeepFace unavailable ---
             brow_dist = self.get_distance(landmarks[55], landmarks[285])
             is_stressed = bool(brow_dist < 0.05) # Furrowed brows
 
-            # --- 4. Emotion Detection (Smile) ---
+            # --- 5. Smile Detection ---
             # Mouth corners: 61 (left), 291 (right)
             # Reference: Eye corners 33 and 263 to normalize for face distance
             mouth_width = self.get_distance(landmarks[61], landmarks[291])
@@ -140,7 +166,8 @@ class VisionEngine:
                 "is_smiling": is_smiling,
                 "is_talking": is_talking,  # New metric for speech activity detection
                 "stress_detected": is_stressed,
-                "is_stressed": bool(is_stressed or eye_contact_score < 0.4)
+                "is_stressed": bool(is_stressed or eye_contact_score < 0.4),
+                "emotion": "neutral"  # Placeholder - use analyze_emotion_from_frame() for real emotion
             }
 
         except Exception as e:
@@ -152,5 +179,46 @@ class VisionEngine:
                 "head_gesture": "neutral",
                 "is_smiling": False,
                 "is_talking": False,
-                "is_stressed": False
+                "is_stressed": False,
+                "emotion": "neutral"
             }
+    
+    def analyze_emotion_from_frame(self, frame_base64: str) -> str:
+        """
+        Analyze emotion from frame using DeepFace.
+        
+        Args:
+            frame_base64: Base64-encoded image frame (JPEG or PNG)
+            
+        Returns:
+            Emotion label: "angry", "fear", "happy", "neutral", "sad", "surprise", "disgust"
+        """
+        if self.deepface_model is None:
+            return "neutral"
+        
+        try:
+            # Decode base64 image
+            import cv2
+            img_data = base64.b64decode(frame_base64)
+            nparr = np.frombuffer(img_data, np.uint8)
+            img = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
+            
+            # Analyze emotion
+            result = self.deepface_model.analyze(
+                img, 
+                actions=['emotion'],
+                enforce_detection=False,  # Don't fail if face not detected
+                silent=True
+            )
+            
+            # Extract dominant emotion
+            if isinstance(result, list) and len(result) > 0:
+                emotion = result[0].get('dominant_emotion', 'neutral')
+            else:
+                emotion = result.get('dominant_emotion', 'neutral')
+            
+            return emotion
+            
+        except Exception as e:
+            logger.error("DeepFace emotion analysis failed: %s", e)
+            return "neutral"
